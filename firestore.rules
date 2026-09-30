@@ -14,9 +14,18 @@ service cloud.firestore {
     function isStaff() { return signedIn() && role() in ['admin', 'checker']; }
     function isAdmin() { return signedIn() && role() == 'admin'; }
 
+    // The admin can add and remove checkers from the app, but can never make
+    // anyone an admin. Admins are only made in the Firebase console.
     match /users/{uid} {
       allow read: if signedIn() && (request.auth.uid == uid || isAdmin());
-      allow write: if false;
+      allow create: if isAdmin()
+        && request.resource.data.keys().hasOnly(['name', 'role', 'email'])
+        && request.resource.data.role == 'checker'
+        && request.resource.data.name is string
+        && request.resource.data.name.size() > 0
+        && request.resource.data.name.size() <= 60;
+      allow delete: if isAdmin() && resource.data.role == 'checker';
+      allow update: if false;
     }
 
     match /items/{id} {

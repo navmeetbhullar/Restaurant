@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Checkers · Stock</title>
+<link rel="stylesheet" href="apple-ui/apple-ui.css">
+<script src="js/theme.js"></script>
+</head>
+<body>
+
+<div class="page wait">
+  <div class="topbar">
+    <a class="icon-btn" aria-label="Back" href="account.html">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 6l-6 6 6 6"/></svg>
+    </a>
+  </div>
+
+  <h1 class="title">Checkers</h1>
+  <p class="sub">People who do the stock check. They can see today's list but cannot change items or groups.</p>
+
+  <div class="group plain" data-sq="22" id="list"><div class="empty">Loading…</div></div>
+
+  <div class="lbl">Add a checker</div>
+  <form id="form" novalidate autocomplete="off">
+    <div class="group plain" data-sq="22">
+      <div class="row"><div class="key">Name</div><input class="field right" id="name" placeholder="e.g. Raj" maxlength="60"></div>
+      <div class="row"><div class="key">Email</div><input class="field right" id="email" type="email" placeholder="raj@example.com" autocapitalize="off"></div>
+      <div class="row"><div class="key">Password</div><input class="field right" id="pw" type="text" placeholder="at least 6 characters" autocapitalize="off" autocomplete="new-password"></div>
+    </div>
+    <p class="hint">Give them this email and password. They can change the password in their Account tab.</p>
+    <p class="error-text" id="err" hidden></p>
+    <p class="ok-text" id="ok" hidden></p>
+    <button class="btn" data-press type="submit" id="add">Add checker</button>
+  </form>
+</div>
+
+<script type="module">
+  import { start, db, $, esc, byName, refreshUI, createLogin } from './js/app.js';
+  import { collection, doc, getDocs, setDoc, deleteDoc, query, where }
+    from 'https://www.gstatic.com/firebasejs/12.19.0/firebase-firestore.js';
+
+  await start({ tab: 'account', adminOnly: true });
+  const say = (el, t) => { $(el).textContent = t; $(el).hidden = !t; };
+  const X = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>';
+  let people = [];
+
+  async function draw() {
+    people = (await getDocs(query(collection(db, 'users'), where('role', '==', 'checker'))))
+      .docs.map(d => ({ id: d.id, ...d.data() })).sort(byName);
+    $('#list').innerHTML = people.length ? people.map(p => `
+      <div class="row">
+        <div class="label">${esc(p.name)}<small>${esc(p.email || 'Added in Firebase console')}</small></div>
+        <button class="x" data-id="${p.id}" aria-label="Remove ${esc(p.name)}">${X}</button>
+      </div>`).join('') : '<div class="empty">No checkers yet. Add one below.</div>';
+    refreshUI();
+  }
+
+  $('#list').addEventListener('click', async e => {
+    const b = e.target.closest('button[data-id]'); if (!b) return;
+    const p = people.find(x => x.id === b.dataset.id);
+    if (!confirm(`Remove ${p.name}? They will not be able to use the app any more.`)) return;
+    try { await deleteDoc(doc(db, 'users', p.id)); say('#ok', `${p.name} was removed.`); }
+    catch (ex) { console.error(ex); say('#err', 'Could not remove. Check your internet and try again.'); }
+    draw();
+  });
+
+  $('#form').addEventListener('submit', async e => {
+    e.preventDefault(); say('#err', ''); say('#ok', '');
+    const name = $('#name').value.trim().replace(/\s+/g, ' ');
+    const email = $('#email').value.trim().toLowerCase();
+    const pw = $('#pw').value;
+    if (!name) return say('#err', 'Enter their name.');
+    if (!/^\S+@\S+\.\S+$/.test(email)) return say('#err', 'Enter a proper email address.');
+    if (pw.length < 6) return say('#err', 'The password needs at least 6 characters.');
+
+    $('#add').disabled = true; $('#add').textContent = 'Adding…';
+    try {
+      const uid = await createLogin(email, pw);
+      if (people.some(p => p.id === uid)) throw { code: 'already-checker' };
+      await setDoc(doc(db, 'users', uid), { name, email, role: 'checker' });
+      $('#form').reset();
+      say('#ok', `${name} can now log in with ${email}.`);
+      draw();
+    } catch (ex) {
+      console.error(ex);
+      const c = ex.code || '';
+      say('#err',
+        c === 'auth/email-already-in-use' ? 'That email already has a login with a different password. Use another email, or delete the old login in Firebase (Authentication → Users).' :
+        c === 'auth/invalid-email' ? 'That email does not look right.' :
+        c === 'auth/weak-password' ? 'That password is too weak. Use at least 6 characters.' :
+        c === 'already-checker' ? 'That person is already a checker.' :
+        c === 'permission-denied' ? 'That login belongs to an admin, so it cannot be added as a checker.' :
+        c.includes('network') ? 'No internet connection.' :
+        'Could not add the checker (' + (c || 'unknown error') + ').');
+    }
+    $('#add').disabled = false; $('#add').textContent = 'Add checker';
+  });
+
+  draw();
+</script>
+</body>
+</html>

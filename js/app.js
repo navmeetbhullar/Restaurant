@@ -1,6 +1,7 @@
 // Shared code for every page: Firebase, login check, tab bar, helpers.
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/12.19.0/firebase-app.js';
-import { getAuth, onAuthStateChanged, signOut, connectAuthEmulator }
+import { getAuth, initializeAuth, inMemoryPersistence, onAuthStateChanged, signOut, connectAuthEmulator,
+  createUserWithEmailAndPassword, signInWithEmailAndPassword }
   from 'https://www.gstatic.com/firebasejs/12.19.0/firebase-auth.js';
 import { getFirestore, doc, getDoc, connectFirestoreEmulator }
   from 'https://www.gstatic.com/firebasejs/12.19.0/firebase-firestore.js';
@@ -11,9 +12,32 @@ export const auth = getAuth(app);
 export const db = getFirestore(app);
 
 // Local testing only: talk to the Firebase emulator instead of the real project.
-if (location.hostname === 'localhost' && location.port === '5055') {
+const EMULATOR = location.hostname === 'localhost' && location.port === '5055';
+if (EMULATOR) {
   connectAuthEmulator(auth, 'http://localhost:9099', { disableWarnings: true });
   connectFirestoreEmulator(db, 'localhost', 8080);
+}
+
+/* ---------- making logins for other people ----------
+   Creating a login in the browser normally logs you in as that new person.
+   Doing it on a second, throwaway connection keeps the admin logged in.
+   If the email already has a login (e.g. a checker who was removed) and the
+   password matches, that login is reused. Returns the new person's uid. */
+export async function createLogin(email, password) {
+  const spare = initializeApp(firebaseConfig, 'spare-' + Date.now());
+  const spareAuth = initializeAuth(spare, { persistence: inMemoryPersistence });
+  if (EMULATOR) connectAuthEmulator(spareAuth, 'http://localhost:9099', { disableWarnings: true });
+  try {
+    try {
+      return (await createUserWithEmailAndPassword(spareAuth, email, password)).user.uid;
+    } catch (e) {
+      if (e.code !== 'auth/email-already-in-use') throw e;
+      try { return (await signInWithEmailAndPassword(spareAuth, email, password)).user.uid; }
+      catch { throw e; }
+    }
+  } finally {
+    await signOut(spareAuth).catch(() => {});
+  }
 }
 
 /* ---------- units ---------- */

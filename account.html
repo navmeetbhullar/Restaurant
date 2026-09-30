@@ -19,9 +19,44 @@
     <div class="row"><div class="label">Role</div><div class="val" id="role"></div></div>
   </div>
 
+  <div id="adminBox" hidden>
+    <div class="lbl">People</div>
+    <div class="group" data-sq="22">
+      <a class="row" data-tap href="people.html" style="color:inherit;text-decoration:none">
+        <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="9" cy="8" r="3.2"/><path d="M3 19.5c0-3 2.7-5 6-5s6 2 6 5"/><path d="M16 5.2a3 3 0 010 5.6M18 14.8c1.8.6 3 2.2 3 4.7"/></svg></div>
+        <div class="label">Checkers</div><div class="val" id="ncheck"></div>
+        <div class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round"><path d="M9 6l6 6-6 6"/></svg></div>
+      </a>
+    </div>
+  </div>
+
   <div class="lbl">Appearance</div>
   <div class="seg" id="seg">
     <button data-th="light">Light</button><button data-th="dark">Dark</button><button data-th="auto">Auto</button>
+  </div>
+
+  <div class="lbl">Change password</div>
+  <form id="pwForm" novalidate>
+    <input type="email" id="pwUser" autocomplete="username" hidden>
+    <div class="group plain" data-sq="22">
+      <div class="row"><input class="field" id="pwOld" type="password" placeholder="Current password" autocomplete="current-password"></div>
+      <div class="row"><input class="field" id="pwNew" type="password" placeholder="New password (at least 6 characters)" autocomplete="new-password"></div>
+      <div class="row"><input class="field" id="pwNew2" type="password" placeholder="New password again" autocomplete="new-password"></div>
+    </div>
+    <p class="error-text" id="pwErr" hidden></p>
+    <p class="ok-text" id="pwOk" hidden></p>
+    <button class="btn" data-press type="submit" id="pwGo">Change password</button>
+  </form>
+
+  <div id="sampleBox" hidden>
+    <div class="lbl">Sample data (for testing)</div>
+    <div class="group plain" data-sq="22">
+      <div class="row"><div class="label">Sample data<small id="sampleNote">Checking…</small></div></div>
+    </div>
+    <p class="error-text" id="sErr" hidden></p>
+    <p class="ok-text" id="sOk" hidden></p>
+    <button class="btn frost" data-press id="sAdd" hidden>Load sample data</button>
+    <button class="btn frost danger" data-press id="sDel" hidden>Delete sample data</button>
   </div>
 
   <button class="btn frost" data-press id="out" style="margin-top:34px">Log out</button>
@@ -29,17 +64,23 @@
 </div>
 
 <script type="module">
-  import { start, logOut, $ } from './js/app.js';
+  import { start, logOut, auth, db, $ } from './js/app.js';
+  import { EmailAuthProvider, reauthenticateWithCredential, updatePassword }
+    from 'https://www.gstatic.com/firebasejs/12.19.0/firebase-auth.js';
+  import { collection, getDocs, query, where }
+    from 'https://www.gstatic.com/firebasejs/12.19.0/firebase-firestore.js';
 
-  const { user, profile } = await start({ tab: 'account' });
+  const { user, profile, isAdmin } = await start({ tab: 'account' });
+  const say = (el, t) => { $(el).textContent = t; $(el).hidden = !t; };
   $('#name').textContent = profile.name || '—';
   $('#email').textContent = user.email;
-  $('#role').textContent = profile.role === 'admin' ? 'Admin' : 'Checker';
-  $('#who').textContent = profile.role === 'admin'
-    ? 'You can change items, day groups and dates.'
+  $('#pwUser').value = user.email;
+  $('#role').textContent = isAdmin ? 'Admin' : 'Checker';
+  $('#who').textContent = isAdmin
+    ? 'You can change items, day groups, dates and checkers.'
     : 'You can see today’s list. Only the admin can change items.';
 
-  // theme switch, saved on this phone
+  /* ---------- theme, saved on this phone ---------- */
   let cur = 'auto';
   try { cur = localStorage.getItem('theme') || 'auto'; } catch (e) {}
   const mark = t => document.querySelectorAll('#seg button').forEach(b => b.classList.toggle('on', b.dataset.th === t));
@@ -51,6 +92,66 @@
     else document.documentElement.setAttribute('data-theme', t);
     try { t === 'auto' ? localStorage.removeItem('theme') : localStorage.setItem('theme', t); } catch (e) {}
   });
+
+  /* ---------- change password ----------
+     Firebase asks for the current password first, so someone who picks up
+     a logged-in phone cannot lock the owner out. */
+  $('#pwForm').addEventListener('submit', async e => {
+    e.preventDefault(); say('#pwErr', ''); say('#pwOk', '');
+    const old = $('#pwOld').value, pw = $('#pwNew').value, pw2 = $('#pwNew2').value;
+    if (!old) return say('#pwErr', 'Enter your current password.');
+    if (pw.length < 6) return say('#pwErr', 'The new password needs at least 6 characters.');
+    if (pw !== pw2) return say('#pwErr', 'The two new passwords are not the same.');
+    if (pw === old) return say('#pwErr', 'The new password is the same as the current one.');
+    $('#pwGo').disabled = true; $('#pwGo').textContent = 'Changing…';
+    try {
+      await reauthenticateWithCredential(user, EmailAuthProvider.credential(user.email, old));
+      await updatePassword(user, pw);
+      $('#pwForm').reset(); $('#pwUser').value = user.email;
+      say('#pwOk', 'Password changed. Use the new one next time you log in.');
+    } catch (ex) {
+      const c = ex.code || '';
+      say('#pwErr',
+        c.includes('invalid-credential') || c.includes('wrong-password') ? 'Your current password is wrong.' :
+        c.includes('weak-password') ? 'That new password is too weak. Try a longer one.' :
+        c.includes('too-many-requests') ? 'Too many tries. Wait a minute and try again.' :
+        c.includes('network') ? 'No internet connection.' :
+        'Could not change the password (' + c + ').');
+    }
+    $('#pwGo').disabled = false; $('#pwGo').textContent = 'Change password';
+  });
+
+  /* ---------- admin only: checkers + sample data ---------- */
+  if (isAdmin) {
+    $('#adminBox').hidden = false;
+    getDocs(query(collection(db, 'users'), where('role', '==', 'checker')))
+      .then(s => $('#ncheck').textContent = s.size).catch(() => {});
+
+    const sample = await import('./js/sample.js');
+    $('#sampleBox').hidden = false;
+    const check = async () => {
+      const has = await sample.hasSample();
+      $('#sampleNote').textContent = has
+        ? 'Loaded. Delete it before the restaurant starts using the app.'
+        : 'Adds 19 items, 3 festival groups and their dates. All tagged, so it can be deleted later.';
+      $('#sAdd').hidden = has; $('#sDel').hidden = !has;
+      window.AppleUI?.refresh();
+    };
+    $('#sAdd').addEventListener('click', async () => {
+      say('#sErr', ''); say('#sOk', ''); $('#sAdd').disabled = true;
+      try { await sample.addSample(); say('#sOk', 'Sample data loaded. Look at Today, Items and Groups.'); }
+      catch (ex) { console.error(ex); say('#sErr', ex.message === 'already' ? 'Sample data is already loaded.' : 'Could not load sample data.'); }
+      $('#sAdd').disabled = false; check();
+    });
+    $('#sDel').addEventListener('click', async () => {
+      if (!confirm('Delete all sample items, groups and dates? Your own data stays.')) return;
+      say('#sErr', ''); say('#sOk', ''); $('#sDel').disabled = true;
+      try { const n = await sample.removeSample(); say('#sOk', `Deleted ${n} sample entries. Your own data was not touched.`); }
+      catch (ex) { console.error(ex); say('#sErr', 'Could not delete sample data.'); }
+      $('#sDel').disabled = false; check();
+    });
+    check();
+  }
 
   $('#out').addEventListener('click', logOut);
 </script>

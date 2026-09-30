@@ -35,7 +35,7 @@
   const show = (el, text) => { el.textContent = text; el.hidden = !text; };
 
   if (new URLSearchParams(location.search).has('norole'))
-    show($('#err'), 'This account has no role yet. Ask the admin to set it up.');
+    show($('#err'), 'This account does not have access. Ask the admin.');
 
   // already logged in? skip straight to Today
   const stop = onAuthStateChanged(auth, u => { stop(); if (u && !location.search.includes('norole')) location.replace('today.html'); });

@@ -12,4 +12,4 @@ export const firebaseConfig = {
 
 // Web push key: Firebase console > Project settings > Cloud Messaging >
 // Web configuration > Web Push certificates > Key pair. Public, safe to share.
-export const vapidKey = "";
+export const vapidKey = "BBwKO8JfZWlaSrqOw3xMfyzx-VK0Kjopuyqnehk86KRbgMh-2s9yh8btbc_55xeEElCtrHrwR6Oj3elNBVdwGQY";

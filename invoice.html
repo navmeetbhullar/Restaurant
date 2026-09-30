@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Invoice · Stock</title>
+<link rel="stylesheet" href="apple-ui/apple-ui.css">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
+<script src="js/theme.js"></script>
+</head>
+<body>
+
+<div class="page wait">
+  <div class="topbar">
+    <a class="icon-btn" aria-label="Back" href="today.html">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 6l-6 6 6 6"/></svg>
+    </a>
+  </div>
+
+  <h1 class="title">Invoice</h1>
+  <p class="sub" id="sub"></p>
+
+  <div class="group plain" data-sq="22" id="fileBox">
+    <div class="row">
+      <div class="label" id="fileName">No invoice chosen<small>Take a clear photo of the whole invoice, or pick a PDF.</small></div>
+    </div>
+    <div class="row" id="previewRow" hidden style="justify-content:center">
+      <img id="preview" alt="Invoice" style="max-width:100%;max-height:340px;border-radius:12px">
+    </div>
+  </div>
+  <input type="file" id="file" accept="image/*,application/pdf" hidden>
+  <button class="btn frost" data-press id="pick">Take photo or choose file</button>
+  <button class="btn" data-press id="read" disabled>Read invoice</button>
+  <p class="center"><button class="link" id="manual">Type what arrived myself</button></p>
+  <p class="error-text" id="err" hidden></p>
+  <p class="ok-text" id="ok" hidden></p>
+
+  <div id="checkBox" hidden>
+    <div class="lbl" id="checkLbl">What arrived</div>
+    <div class="group plain" data-sq="22" id="rows"></div>
+    <p class="hint">Check each number against the invoice and fix any mistakes. Anything left empty counts as not arrived.</p>
+    <div id="extraBox" hidden>
+      <div class="lbl">On the invoice but not ordered</div>
+      <div class="group plain" data-sq="22" id="extra"></div>
+    </div>
+    <button class="btn" data-press id="save">Save and make "still missing" list</button>
+  </div>
+</div>
+
+<script type="module">
+  import { start, db, api, $, esc, fmtNum, toOrder, blockOf, blockLabel, param, refreshUI, byName } from './js/app.js';
+  import { doc, getDoc, setDoc, updateDoc, serverTimestamp } from 'https://www.gstatic.com/firebasejs/12.19.0/firebase-firestore.js';
+
+  await start({ tab: 'today', adminOnly: true });
+  const bstart = param('block');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(bstart || '')) { location.replace('today.html'); await new Promise(() => {}); }
+  const block = blockOf(bstart);
+  const say = (el, t) => { $(el).textContent = t; $(el).hidden = !t; };
+  $('#sub').textContent = `Order for ${blockLabel(block)}. The app reads the invoice and finds what did not arrive.`;
+
+  const check = (await getDoc(doc(db, 'checks', block.start))).data();
+  if (check?.status !== 'submitted') { location.replace('today.html'); await new Promise(() => {}); }
+  const ordered = Object.entries(check.lines || {})
+    .map(([id, l]) => ({ id, ...l, order: toOrder(l.target, check.counts?.[id], l.unit) }))
+    .filter(l => l.order > 0).sort(byName);
+
+  let file = null;           // { data (base64), mime, dataUrl, name }
+  let extra = [], auto = false, supplier = '';
+
+  /* ---------- show what is already saved ---------- */
+  if (check.invoice) {
+    const inv = (await getDoc(doc(db, 'invoices', block.start))).data();
+    if (inv?.dataUrl) showPreview(inv.dataUrl, inv.mime, inv.name || 'Saved invoice');
+    else $('#fileName').innerHTML = `Invoice saved<small>The file was too big to keep, but the numbers are saved.</small>`;
+    extra = check.invoice.extra || [];
+    showRows(check.invoice.received || {}, 'Saved. You can change the numbers and save again.');
+  }
+
+  function showPreview(src, mime, name) {
+    $('#fileName').innerHTML = `${esc(name)}<small>${mime === 'application/pdf' ? 'PDF' : 'Photo'} ready</small>`;
+    $('#previewRow').hidden = mime === 'application/pdf';
+    if (mime !== 'application/pdf') $('#preview').src = src;
+    refreshUI();
+  }
+
+  /* ---------- choosing a file ---------- */
+  $('#pick').addEventListener('click', () => $('#file').click());
+  $('#file').addEventListener('change', async () => {
+    say('#err', ''); say('#ok', '');
+    const f = $('#file').files[0]; if (!f) return;
+    try {
+      file = f.type === 'application/pdf' ? await readPdf(f) : await shrinkPhoto(f);
+      showPreview(file.dataUrl, file.mime, f.name);
+      $('#read').disabled = false;
+    } catch (e) { console.error(e); say('#err', e.message || 'Could not open that file.'); }
+  });
+
+  // Photos are made smaller (max 1600 px) so they upload fast and can be kept.
+  function shrinkPhoto(f) {
+    return new Promise((res, rej) => {
+      const img = new Image();
+      img.onload = () => {
+        const k = Math.min(1, 1600 / Math.max(img.width, img.height));
+        const c = document.createElement('canvas');
+        c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
+        c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+        const dataUrl = c.toDataURL('image/jpeg', 0.75);
+        URL.revokeObjectURL(img.src);
+        res({ dataUrl, data: dataUrl.split(',')[1], mime: 'image/jpeg', name: f.name });
+      };
+      img.onerror = () => rej(new Error('That photo could not be opened. Try a JPG or PNG.'));
+      img.src = URL.createObjectURL(f);
+    });
+  }
+  function readPdf(f) {
+    if (f.size > 2_900_000) return Promise.reject(new Error('That PDF is too big. Take a photo of it instead.'));
+    return new Promise((res, rej) => {
+      const r = new FileReader();
+      r.onload = () => res({ dataUrl: r.result, data: String(r.result).split(',')[1], mime: 'application/pdf', name: f.name });
+      r.onerror = rej;
+      r.readAsDataURL(f);
+    });
+  }
+
+  /* ---------- reading it with Gemini ---------- */
+  $('#read').addEventListener('click', async () => {
+    say('#err', ''); say('#ok', '');
+    $('#read').disabled = true; $('#read').textContent = 'Reading invoice… (up to 30 seconds)';
+    try {
+      const r = await api('invoice', { block: block.start, file: file.data, mime: file.mime });
+      extra = r.extra || []; auto = true; supplier = r.supplier || '';
+      const found = Object.values(r.received).filter(n => n > 0).length;
+      showRows(r.received, `Read ${found} of ${ordered.length} ordered items${supplier ? ' from ' + supplier : ''}. Check the numbers below.`, r.matched);
+    } catch (e) {
+      console.error(e);
+      say('#err', (e.status === 503 ? 'Automatic reading is not set up yet. ' : (e.message || 'Could not read the invoice.') + ' ')
+        + 'You can type what arrived below.');
+      showRows({}, '');
+    }
+    $('#read').disabled = false; $('#read').textContent = 'Read invoice';
+  });
+  $('#manual').addEventListener('click', () => { say('#err', ''); showRows(check.invoice?.received || {}, ''); $('#rows input')?.focus(); });
+
+  function showRows(received, msg, matched = {}) {
+    $('#checkBox').hidden = false;
+    say('#ok', msg);
+    $('#rows').innerHTML = ordered.map(l => `
+      <div class="row" data-id="${l.id}">
+        <div class="label">${esc(l.name)}<small>Ordered ${fmtNum(l.order)} ${esc(l.unit)}${matched[l.id] ? ` · “${esc(matched[l.id])}”` : ''}</small></div>
+        <input class="field right" type="number" inputmode="decimal" min="0" step="any" style="max-width:90px"
+          value="${received[l.id] != null ? received[l.id] : ''}" placeholder="0" aria-label="${esc(l.name)} arrived">
+        <span class="unit">${esc(l.unit)}</span>
+      </div>`).join('');
+    $('#extraBox').hidden = !extra.length;
+    $('#extra').innerHTML = extra.map(x => `<div class="row"><div class="label">${esc(x.name)}</div><div class="val">${esc(x.qty)}</div></div>`).join('');
+    refreshUI();
+  }
+
+  /* ---------- saving ---------- */
+  $('#save').addEventListener('click', async () => {
+    say('#err', '');
+    const received = {};
+    for (const row of document.querySelectorAll('#rows .row')) {
+      const v = row.querySelector('input').value.trim();
+      if (v !== '' && !(Number(v) >= 0)) return say('#err', 'Check the numbers: use plain numbers like 12 or 2.5.');
+      received[row.dataset.id] = v === '' ? 0 : Number(v);
+    }
+    $('#save').disabled = true; $('#save').textContent = 'Saving…';
+    try {
+      // keep the file too, if it is small enough for the database (about 900 KB)
+      if (file) await setDoc(doc(db, 'invoices', block.start), {
+        name: file.name, mime: file.mime, at: serverTimestamp(),
+        dataUrl: file.dataUrl.length < 900_000 ? file.dataUrl : null,
+      });
+      await updateDoc(doc(db, 'checks', block.start), {
+        invoice: { received, extra, auto, supplier, at: serverTimestamp() },
+      });
+      location.href = `check.html?block=${block.start}&v=missing`;
+    } catch (e) {
+      console.error(e); say('#err', 'Could not save. Check your internet and try again.');
+      $('#save').disabled = false; $('#save').textContent = 'Save and make "still missing" list';
+    }
+  });
+</script>
+</body>
+</html>

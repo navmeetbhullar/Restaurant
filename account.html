@@ -5,6 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Account · Stock</title>
 <link rel="stylesheet" href="apple-ui/apple-ui.css">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
+<meta name="apple-mobile-web-app-title" content="Stock">
 <script src="js/theme.js"></script>
 </head>
 <body>
@@ -34,6 +37,9 @@
   <div class="seg" id="seg">
     <button data-th="light">Light</button><button data-th="dark">Dark</button><button data-th="auto">Auto</button>
   </div>
+
+  <div class="lbl" id="pushLbl" hidden>Notifications</div>
+  <div id="pushBox"></div>
 
   <div class="lbl">Change password</div>
   <form id="pwForm" novalidate>
@@ -133,7 +139,7 @@
       const has = await sample.hasSample();
       $('#sampleNote').textContent = has
         ? 'Loaded. Delete it before the restaurant starts using the app.'
-        : 'Adds 19 items, 3 festival groups and their dates. All tagged, so it can be deleted later.';
+        : 'Adds 19 items, 2 Diwali-only items, 3 festival groups and their dates. All tagged, so it can be deleted later.';
       $('#sAdd').hidden = has; $('#sDel').hidden = !has;
       window.AppleUI?.refresh();
     };
@@ -152,6 +158,11 @@
     });
     check();
   }
+
+  import('./js/push.js')
+    .then(m => m.offer($('#pushBox'), { always: true }))
+    .then(() => { $('#pushLbl').hidden = !$('#pushBox').innerHTML.trim(); })
+    .catch(e => console.warn(e));
 
   $('#out').addEventListener('click', logOut);
 </script>

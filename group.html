@@ -5,6 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Group · Stock</title>
 <link rel="stylesheet" href="apple-ui/apple-ui.css">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
+<meta name="apple-mobile-web-app-title" content="Stock">
 <script src="js/theme.js"></script>
 </head>
 <body>
@@ -17,26 +20,34 @@
   </div>
 
   <h1 class="title" id="title">New group</h1>
-  <p class="sub" id="intro">A group for busy days, like a festival. Set how much more of everything you need.</p>
+  <p class="sub">A group for busy days, like a festival. Each festival day adds extra stock on top of the normal block amount.</p>
 
   <div class="group plain" data-sq="22">
     <div class="row"><div class="key">Name</div><input class="field right" id="name" placeholder="e.g. Diwali" maxlength="60" autocomplete="off"></div>
   </div>
 
-  <div class="lbl">All items</div>
-  <div class="seg" id="mult">
-    <button data-m="1">1x</button><button data-m="2">2x</button><button data-m="3">3x</button><button data-m="custom">Custom</button>
+  <div class="lbl">Each festival day adds, for all items</div>
+  <div class="seg" id="extra">
+    <button data-d="1">+1 day</button><button data-d="2">+2 days</button><button data-d="3">+3 days</button><button data-d="custom">Custom</button>
   </div>
   <div class="group plain" data-sq="22" id="customBox" style="margin-top:11px" hidden>
-    <div class="row"><div class="key">Multiplier</div><input class="field right" id="custom" type="number" inputmode="decimal" min="0.1" step="any" placeholder="e.g. 1.5"><span class="unit">x</span></div>
+    <div class="row"><div class="key">Extra days</div><input class="field right" id="custom" type="number" inputmode="decimal" min="0" step="any" placeholder="e.g. 0.5"><span class="unit">days</span></div>
   </div>
-  <p class="hint" id="multHint"></p>
+  <p class="hint" id="extraHint"></p>
 
-  <div id="more" hidden>
-    <div class="lbl">Each item</div>
-    <div class="group plain" data-sq="22" id="rules"></div>
-    <p class="hint">"Group" uses the multiplier above. "Multiply" sets this item's own multiplier. "Amount" sets an exact amount.</p>
+  <div class="lbl">Each item</div>
+  <div class="group plain" data-sq="22" id="rules"></div>
+  <p class="hint">"Group" uses the extra days above. "+ Days" gives this item its own extra days. "+ Amount" adds an exact amount for each festival day.</p>
+
+  <div class="lbl">Items just for this group</div>
+  <div class="group plain" data-sq="22" id="only"></div>
+  <div class="group plain" data-sq="22" style="margin-top:11px">
+    <div class="row"><div class="key">Name</div><input class="field right" id="oName" placeholder="e.g. Diyas" maxlength="80" autocomplete="off"></div>
+    <div class="row"><div class="key">Unit</div><select class="field right" id="oUnit"></select></div>
+    <div class="row"><div class="key">Per festival day</div><input class="field right" id="oAmt" type="number" inputmode="decimal" min="0" step="any" placeholder="0"><span class="unit" id="oUnitLbl"></span></div>
   </div>
+  <p class="hint">Only shows in stock checks for blocks that have this group's days.</p>
+  <button class="btn frost" data-press id="oAdd">Add item to group</button>
 
   <p class="error-text" id="err" hidden></p>
   <p class="ok-text" id="ok" hidden></p>
@@ -60,66 +71,71 @@
 </div>
 
 <script type="module">
-  import { start, db, $, esc, param, idealFor, fmtNum, fmtMult, isoDate, niceDate, fromIso, byName, refreshUI } from './js/app.js';
-  import { collection, doc, getDoc, getDocs, addDoc, updateDoc, deleteDoc, writeBatch, query, where, documentId }
+  import { start, db, $, esc, param, fmtNum, isoDate, niceDate, fromIso, byName, refreshUI, UNITS,
+           blockAmount, festivalExtra, BLOCK_DAYS, extraDaysOf } from './js/app.js';
+  import { collection, doc, getDoc, getDocs, writeBatch, deleteDoc, query, where, documentId }
     from 'https://www.gstatic.com/firebasejs/12.19.0/firebase-firestore.js';
 
   await start({ tab: 'groups', adminOnly: true });
-  const id = param('id');
+  let id = param('id');
   const today = isoDate();
   const say = (el, t) => { $(el).textContent = t; $(el).hidden = !t; };
 
-  let g = { name: '', multiplier: 2, rules: {} };
+  let g = { name: '', extraDays: 1, rules: {} };
   if (id) {
     const s = await getDoc(doc(db, 'groups', id));
     if (!s.exists()) { location.replace('groups.html'); await new Promise(() => {}); }
     g = { rules: {}, ...s.data() };
   }
-  const items = id ? (await getDocs(collection(db, 'items'))).docs.map(d => ({ id: d.id, ...d.data() })).sort(byName) : [];
-  // work on a copy; nothing is saved until "Save group"
+  const all = (await getDocs(collection(db, 'items'))).docs.map(d => ({ id: d.id, ...d.data() })).sort(byName);
+  const items = all.filter(i => !i.only);
+
+  // work on copies; nothing is saved until "Save group"
   const rules = structuredClone(g.rules || {});
-  let multiplier = g.multiplier;
+  let extraDays = extraDaysOf(g);
+  // items just for this group: existing ones plus ones added on this screen
+  let only = all.filter(i => i.only && i.only === id)
+    .map(i => ({ id: i.id, name: i.name, unit: i.unit, amt: rules[i.id]?.value ?? 0 }));
+  const removedOnly = [];
   let dirty = false;
   const touch = () => { dirty = true; say('#ok', ''); };
 
-  /* ---------- name + multiplier ---------- */
+  /* ---------- name + extra days ---------- */
   $('#name').value = g.name;
-  if (id) {
-    $('#title').textContent = g.name;
-    document.title = g.name + ' · Stock';
-    $('#intro').textContent = 'Set the amounts for this group, then choose the dates that use it.';
-    $('#more').hidden = $('#datesBox').hidden = false;
-  }
+  if (id) { $('#title').textContent = g.name; document.title = g.name + ' · Stock'; $('#datesBox').hidden = false; }
   $('#name').addEventListener('input', touch);
 
-  function markMult(customMode) {
-    const preset = !customMode && [1, 2, 3].includes(multiplier);
-    document.querySelectorAll('#mult button').forEach(b =>
-      b.classList.toggle('on', preset ? +b.dataset.m === multiplier : b.dataset.m === 'custom'));
+  function markExtra(customMode) {
+    const preset = !customMode && [1, 2, 3].includes(extraDays);
+    document.querySelectorAll('#extra button').forEach(b =>
+      b.classList.toggle('on', preset ? +b.dataset.d === extraDays : b.dataset.d === 'custom'));
     $('#customBox').hidden = preset;
-    if (!preset && document.activeElement !== $('#custom')) $('#custom').value = multiplier || '';
-    $('#multHint').textContent = `Every item needs ${fmtMult(multiplier || 0)} its normal ideal amount, unless you change it below.`;
+    if (!preset && document.activeElement !== $('#custom')) $('#custom').value = extraDays;
+    $('#extraHint').textContent = `Each festival day counts as ${fmtNum(1 + (extraDays || 0))} normal days. A normal day is the block amount divided by its days (Wed–Fri ÷ 3, Sat–Tue ÷ 4).`;
     refreshUI();
   }
-  $('#mult').addEventListener('click', e => {
+  $('#extra').addEventListener('click', e => {
     const b = e.target.closest('button'); if (!b) return;
     touch();
-    if (b.dataset.m === 'custom') { markMult(true); $('#custom').focus(); }
-    else { multiplier = +b.dataset.m; markMult(); drawRules(); }
+    if (b.dataset.d === 'custom') { markExtra(true); $('#custom').focus(); }
+    else { extraDays = +b.dataset.d; markExtra(); drawRules(); }
   });
   $('#custom').addEventListener('input', () => {
-    touch(); multiplier = Number($('#custom').value) || 0; markMult(true); drawRules();
+    touch(); extraDays = $('#custom').value === '' ? NaN : Number($('#custom').value); markExtra(true); drawRules();
   });
-  markMult();
+  markExtra();
 
   /* ---------- per-item settings ---------- */
-  const MODES = [['auto', 'Group'], ['x', 'Multiply'], ['amt', 'Amount']];
+  const MODES = [['auto', 'Group'], ['days', '+ Days'], ['amt', '+ Amount']];
+  const grp = () => ({ extraDays: extraDays || 0, rules });
   function preview(item) {
-    const v = idealFor(item, { multiplier, rules });
-    return `Normal ${fmtNum(item.ideal)} ${esc(item.unit)} → <b style="color:var(--ink)">${fmtNum(v)} ${esc(item.unit)}</b>`;
+    const per = t => fmtNum(festivalExtra(item, grp(), blockAmount(item, t) / BLOCK_DAYS[t]));
+    const a = per('A'), b = per('B');
+    const u = esc(item.unit), ink = t => `<b style="color:var(--ink)">${t}</b>`;
+    return a === b ? `Each festival day: ${ink(`+${a} ${u}`)}`
+      : `Each festival day: ${ink(`+${a} ${u}`)} Wed–Fri · ${ink(`+${b} ${u}`)} Sat–Tue`;
   }
   function drawRules() {
-    if (!id) return;
     $('#rules').innerHTML = items.length ? items.map(i => {
       const r = rules[i.id]; const mode = r?.mode || 'auto';
       return `
@@ -128,8 +144,8 @@
         <div class="ctrl">
           <div class="seg mini">${MODES.map(([m, t]) => `<button data-mode="${m}" class="${m === mode ? 'on' : ''}">${t}</button>`).join('')}</div>
           <input class="field" type="number" inputmode="decimal" min="0" step="any" ${mode === 'auto' ? 'hidden' : ''}
-            value="${r ? r.value : ''}" placeholder="${mode === 'x' ? 'e.g. 2.5' : 'amount'}" aria-label="${esc(i.name)} value">
-          <span class="unit" ${mode === 'auto' ? 'hidden' : ''}>${mode === 'x' ? 'x' : esc(i.unit)}</span>
+            value="${r && isFinite(r.value) ? r.value : ''}" aria-label="${esc(i.name)} value">
+          <span class="unit" ${mode === 'auto' ? 'hidden' : ''}>${mode === 'days' ? 'days' : esc(i.unit)}</span>
         </div>
       </div>`;
     }).join('') : '<div class="empty">No items yet. Add items in the Items tab first.</div>';
@@ -137,25 +153,68 @@
   }
   $('#rules').addEventListener('click', e => {
     const b = e.target.closest('button[data-mode]'); if (!b) return;
-    const row = b.closest('.row'), item = items.find(i => i.id === row.dataset.id), m = b.dataset.mode;
+    const itemId = b.closest('.row').dataset.id, m = b.dataset.mode;
+    const item = items.find(i => i.id === itemId);
     touch();
-    if (m === 'auto') delete rules[item.id];
-    else {
-      // start with a sensible number so the preview makes sense straight away
-      const now = idealFor(item, { multiplier, rules });
-      rules[item.id] = { mode: m, value: m === 'x' ? (rules[item.id]?.mode === 'x' ? rules[item.id].value : multiplier) : now };
+    if (m === 'auto') delete rules[itemId];
+    else if (rules[itemId]?.mode !== m) {
+      // start from what it is now, so the preview does not jump
+      const now = festivalExtra(item, grp(), blockAmount(item, 'B') / BLOCK_DAYS.B);
+      rules[itemId] = { mode: m, value: m === 'days' ? (extraDays || 0) : Math.round(now * 100) / 100 };
     }
     drawRules();
-    row.isConnected || $(`.row[data-id="${item.id}"] input`)?.focus();
+    $(`.row[data-id="${itemId}"] input:not([hidden])`)?.focus();
   });
   $('#rules').addEventListener('input', e => {
     const row = e.target.closest('.row'); if (!row) return;
-    const item = items.find(i => i.id === row.dataset.id);
     touch();
-    rules[item.id].value = e.target.value === '' ? NaN : Number(e.target.value);
-    row.querySelector('.pv').innerHTML = preview(item);
+    rules[row.dataset.id].value = e.target.value === '' ? NaN : Number(e.target.value);
+    row.querySelector('.pv').innerHTML = preview(items.find(i => i.id === row.dataset.id));
   });
   drawRules();
+
+  /* ---------- items just for this group ---------- */
+  const X = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>';
+  $('#oUnit').innerHTML = UNITS.map(u => `<option>${u}</option>`).join('');
+  $('#oUnit').value = 'pieces';
+  const syncOUnit = () => $('#oUnitLbl').textContent = $('#oUnit').value;
+  $('#oUnit').addEventListener('change', syncOUnit); syncOUnit();
+  function drawOnly() {
+    $('#only').innerHTML = only.length ? only.map((o, n) => `
+      <div class="row" data-n="${n}">
+        <div class="label">${esc(o.name)}<small>per festival day</small></div>
+        <input class="field right" type="number" inputmode="decimal" min="0" step="any" value="${isFinite(o.amt) ? o.amt : ''}" style="max-width:90px" aria-label="${esc(o.name)} amount">
+        <span class="unit">${esc(o.unit)}</span>
+        <button class="x" aria-label="Remove ${esc(o.name)}">${X}</button>
+      </div>`).join('') : '<div class="empty">None yet. Add things only needed for this festival, like diyas or sweet boxes.</div>';
+    refreshUI();
+  }
+  $('#only').addEventListener('input', e => {
+    const row = e.target.closest('[data-n]'); if (!row) return;
+    touch(); only[+row.dataset.n].amt = e.target.value === '' ? NaN : Number(e.target.value);
+  });
+  $('#only').addEventListener('click', e => {
+    const row = e.target.closest('.x')?.closest('[data-n]'); if (!row) return;
+    touch();
+    const [o] = only.splice(+row.dataset.n, 1);
+    if (o.id) removedOnly.push(o.id);
+    drawOnly();
+  });
+  $('#oAdd').addEventListener('click', () => {
+    say('#err', '');
+    const name = $('#oName').value.trim().replace(/\s+/g, ' ');
+    const amt = Number($('#oAmt').value);
+    if (!name) return say('#err', 'Give the new item a name.');
+    if ($('#oAmt').value === '' || !(amt >= 0)) return say('#err', `Enter how much ${name} is needed for each festival day.`);
+    const clash = [...all.filter(i => !removedOnly.includes(i.id)), ...only].some(i => i.name.toLowerCase() === name.toLowerCase());
+    if (clash) return say('#err', `There is already an item called "${name}".`);
+    touch();
+    only.push({ name, unit: $('#oUnit').value, amt });
+    $('#oName').value = ''; $('#oAmt').value = '';
+    drawOnly();
+    say('#ok', `${name} added. Tap "Save group" to keep it.`);
+  });
+  drawOnly();
 
   /* ---------- save ---------- */
   $('#save').addEventListener('click', async () => {
@@ -163,37 +222,50 @@
     const name = $('#name').value.trim().replace(/\s+/g, ' ');
     if (!name) return say('#err', 'Give the group a name, like "Diwali".');
     if (name.toLowerCase() === 'normal') return say('#err', '"Normal" is already used. Pick another name.');
-    if (!(multiplier > 0)) return say('#err', 'The multiplier must be more than 0, like 1.5 or 2.');
+    if (!(extraDays >= 0)) return say('#err', 'Extra days must be 0 or more, like 1 or 0.5.');
     for (const i of items) {
-      const r = rules[i.id]; if (!r) continue;
-      if (!isFinite(r.value) || r.value < 0 || (r.mode === 'x' && r.value === 0))
-        return say('#err', `Check the number for ${i.name}.`);
+      const r = rules[i.id];
+      if (r && !(r.value >= 0)) return say('#err', `Check the number for ${i.name}.`);
     }
-    const all = (await getDocs(collection(db, 'groups'))).docs;
-    if (all.some(d => d.id !== id && d.data().name.toLowerCase() === name.toLowerCase()))
+    for (const o of only) if (!(o.amt >= 0)) return say('#err', `Check the amount for ${o.name}.`);
+    const others = (await getDocs(collection(db, 'groups'))).docs;
+    if (others.some(d => d.id !== id && d.data().name.toLowerCase() === name.toLowerCase()))
       return say('#err', `There is already a group called "${name}".`);
 
     $('#save').disabled = true; $('#save').textContent = 'Saving…';
     try {
-      // keep only rules for items that still exist
+      const batch = writeBatch(db);
+      const gref = id ? doc(db, 'groups', id) : doc(collection(db, 'groups'));
+      // rules for normal items that still exist, plus amounts for group-only items
       const clean = Object.fromEntries(Object.entries(rules).filter(([k]) => items.some(i => i.id === k)));
-      if (id) {
-        await updateDoc(doc(db, 'groups', id), { name, multiplier, rules: clean });
-        dirty = false;
-        $('#title').textContent = name;
-        say('#ok', 'Saved.');
-      } else {
-        const ref = await addDoc(collection(db, 'groups'), { name, multiplier, rules: {} });
-        dirty = false;
-        location.replace('group.html?id=' + ref.id);
+      for (const o of only) {
+        if (!o.id) {
+          const iref = doc(collection(db, 'items'));
+          o.id = iref.id;
+          batch.set(iref, { name: o.name, unit: o.unit, a: 0, b: 0, only: gref.id, ...(g.sample ? { sample: true } : {}) });
+        }
+        clean[o.id] = { mode: 'amt', value: o.amt };
       }
+      removedOnly.forEach(i => batch.delete(doc(db, 'items', i)));
+      removedOnly.length = 0;
+      batch.set(gref, { name, extraDays, rules: clean, ...(g.sample ? { sample: true } : {}) });
+      await batch.commit();
+      dirty = false;
+      if (!id) {
+        id = gref.id; g.name = name;
+        history.replaceState(null, '', 'group.html?id=' + id);
+        $('#datesBox').hidden = false; drawDates();
+        say('#ok', 'Saved. Now add the dates that use this group, below.');
+      } else say('#ok', 'Saved.');
+      g.name = name;
+      $('#title').textContent = name;
+      refreshUI();
     } catch (ex) { console.error(ex); say('#err', 'Could not save. Check your internet and try again.'); }
     $('#save').disabled = false; $('#save').textContent = 'Save group';
   });
   addEventListener('beforeunload', e => { if (dirty) e.preventDefault(); });
 
   /* ---------- dates ---------- */
-  const X = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>';
   async function drawDates() {
     const ds = (await getDocs(query(collection(db, 'dates'), where('group', '==', id)))).docs.map(d => d.id).sort();
     const upcoming = ds.filter(d => d >= today), past = ds.filter(d => d < today).slice(-5);
@@ -243,10 +315,11 @@
   });
 
   $('#del').addEventListener('click', async () => {
-    if (!confirm(`Delete "${g.name}"? Its dates will go back to Normal.`)) return;
+    if (!confirm(`Delete "${g.name}"? Its dates go back to normal, and items made just for it are deleted.`)) return;
     try {
       const batch = writeBatch(db);
       (await getDocs(query(collection(db, 'dates'), where('group', '==', id)))).docs.forEach(d => batch.delete(d.ref));
+      (await getDocs(query(collection(db, 'items'), where('only', '==', id)))).docs.forEach(d => batch.delete(d.ref));
       batch.delete(doc(db, 'groups', id));
       await batch.commit();
       dirty = false;

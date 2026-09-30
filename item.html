@@ -5,6 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Item · Stock</title>
 <link rel="stylesheet" href="apple-ui/apple-ui.css">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
+<meta name="apple-mobile-web-app-title" content="Stock">
 <script src="js/theme.js"></script>
 </head>
 <body>
@@ -17,13 +20,14 @@
   </div>
 
   <h1 class="title" id="title">New item</h1>
-  <p class="sub">The normal ideal amount is how much should be in the store on a normal day.</p>
+  <p class="sub" id="intro">How much should be in the store at the start of each block, on normal days.</p>
 
   <form id="form" novalidate>
     <div class="group plain" data-sq="22">
       <div class="row"><div class="key">Name</div><input class="field right" id="name" placeholder="e.g. Onions" maxlength="80" autocomplete="off"></div>
       <div class="row"><div class="key">Unit</div><select class="field right" id="unit"></select></div>
-      <div class="row"><div class="key">Ideal amount</div><input class="field right" id="ideal" type="number" inputmode="decimal" min="0" step="any" placeholder="0"><span class="unit" id="unitlbl"></span></div>
+      <div class="row"><div class="key">Wed–Fri<small class="unit" style="display:block;font-size:12px">3 days</small></div><input class="field right" id="a" type="number" inputmode="decimal" min="0" step="any" placeholder="0"><span class="unit ul"></span></div>
+      <div class="row"><div class="key">Sat–Tue<small class="unit" style="display:block;font-size:12px">4 days</small></div><input class="field right" id="b" type="number" inputmode="decimal" min="0" step="any" placeholder="0"><span class="unit ul"></span></div>
     </div>
     <p class="error-text" id="err" hidden></p>
     <button class="btn" data-press type="submit" id="save">Save</button>
@@ -45,18 +49,20 @@
     const s = await getDoc(doc(db, 'items', id));
     if (!s.exists()) { location.replace('items.html'); await new Promise(() => {}); }
     item = s.data();
+    if (item.only) { location.replace('group.html?id=' + encodeURIComponent(item.only)); await new Promise(() => {}); }
   }
 
   // units list, keeping any old unit that is not in the list any more
   const units = item && !UNITS.includes(item.unit) ? [...UNITS, item.unit] : UNITS;
   $('#unit').innerHTML = units.map(u => `<option>${u}</option>`).join('');
-  const syncUnit = () => $('#unitlbl').textContent = $('#unit').value;
+  const syncUnit = () => document.querySelectorAll('.ul').forEach(el => el.textContent = $('#unit').value);
   $('#unit').addEventListener('change', syncUnit);
 
   if (item) {
     $('#title').textContent = item.name;
     document.title = item.name + ' · Stock';
-    $('#name').value = item.name; $('#unit').value = item.unit; $('#ideal').value = item.ideal;
+    $('#name').value = item.name; $('#unit').value = item.unit;
+    $('#a').value = item.a ?? item.ideal ?? ''; $('#b').value = item.b ?? item.ideal ?? '';
     $('#del').hidden = false;
   } else {
     $('#name').focus();
@@ -68,9 +74,10 @@
     e.preventDefault(); err('');
     const name = $('#name').value.trim().replace(/\s+/g, ' ');
     const unit = $('#unit').value;
-    const ideal = Number($('#ideal').value);
+    const a = Number($('#a').value), b = Number($('#b').value);
     if (!name) return err('Give the item a name.');
-    if ($('#ideal').value === '' || !isFinite(ideal) || ideal < 0) return err('Enter the ideal amount as a number, like 10 or 2.5.');
+    for (const [v, n] of [[$('#a').value, 'Wed–Fri'], [$('#b').value, 'Sat–Tue']])
+      if (v === '' || !isFinite(Number(v)) || Number(v) < 0) return err(`Enter the ${n} amount as a number, like 10 or 2.5.`);
 
     // stop two items with the same name
     const all = (await getDocs(collection(db, 'items'))).docs;
@@ -79,8 +86,8 @@
 
     $('#save').disabled = true; $('#save').textContent = 'Saving…';
     try {
-      if (id) await updateDoc(doc(db, 'items', id), { name, unit, ideal });
-      else await addDoc(collection(db, 'items'), { name, unit, ideal, created: serverTimestamp() });
+      if (id) await updateDoc(doc(db, 'items', id), { name, unit, a, b, ideal: deleteField() });
+      else await addDoc(collection(db, 'items'), { name, unit, a, b, created: serverTimestamp() });
       location.href = 'items.html';
     } catch (ex) {
       console.error(ex); err('Could not save. Check your internet and try again.');

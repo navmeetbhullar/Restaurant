@@ -5,6 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Today · Stock</title>
 <link rel="stylesheet" href="apple-ui/apple-ui.css">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
+<meta name="theme-color" content="#f2f2f7">
 <script src="js/theme.js"></script>
 </head>
 <body>
@@ -13,87 +16,226 @@
   <h1 class="title" id="title">Today</h1>
   <p class="sub" id="date"></p>
 
+  <div id="pushBox"></div>
+
+  <!-- block summary, both roles -->
   <div class="group" data-sq="22">
     <div class="row">
-      <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l2.4 5.3 5.6.6-4.2 3.9 1.2 5.7L12 15.7 6.9 18.5l1.2-5.7L4 8.9l5.6-.6z"/></svg></div>
-      <div class="label" id="gname">…<small id="gnote"></small></div><div class="val" id="gmult"></div>
+      <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="5" width="17" height="15.5" rx="3"/><path d="M3.5 10h17M8 3v4M16 3v4"/></svg></div>
+      <div class="label" id="blockName">…<small id="blockNote"></small></div>
     </div>
   </div>
 
-  <div class="lbl">Ideal amounts</div>
-  <div class="group plain" data-sq="22" id="list"><div class="empty">Loading…</div></div>
+  <!-- ===== checker ===== -->
+  <div id="checker" hidden>
+    <div id="cDone" hidden>
+      <div class="lbl">Stock check</div>
+      <div class="group" data-sq="22">
+        <div class="row status"><span class="dot ok"></span><div class="label" id="cDoneText">Done<small></small></div></div>
+        <a class="row" data-tap id="cSeeMine" style="color:inherit;text-decoration:none">
+          <div class="label">See what was counted</div>
+          <div class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round"><path d="M9 6l6 6-6 6"/></svg></div>
+        </a>
+      </div>
+      <p class="hint" id="cNext"></p>
+    </div>
 
-  <div class="lbl">See another day</div>
-  <div class="group plain" data-sq="22">
-    <div class="row"><div class="key">Date</div><input class="field right" type="date" id="pick"></div>
+    <div id="cTodo" hidden>
+      <div class="lbl" id="cProgress">Count what is in the store</div>
+      <div class="group plain" data-sq="22" id="cList"></div>
+      <p class="hint">Tap an item to count it. Your numbers are saved as you go.</p>
+      <p class="error-text" id="cErr" hidden></p>
+      <button class="btn" data-press id="cSubmit">Submit stock check</button>
+    </div>
   </div>
-  <p class="hint" id="back" hidden><button class="link" id="backbtn">Back to today</button></p>
 
-  <div class="lbl">Coming up</div>
-  <div class="group plain" data-sq="22" id="soon"><div class="empty">Loading…</div></div>
+  <!-- ===== admin ===== -->
+  <div id="admin" hidden>
+    <div class="lbl">Stock check</div>
+    <div class="group" data-sq="22" id="aStatus"></div>
+
+    <div id="aActions"></div>
+
+    <div id="aNotify" hidden>
+      <div class="lbl">Remind a checker</div>
+      <div class="group plain" data-sq="22" id="aCheckers"></div>
+      <p class="error-text" id="aErr" hidden></p>
+      <p class="ok-text" id="aOk" hidden></p>
+      <button class="btn" data-press id="aSend">Send notification</button>
+    </div>
+
+    <div class="lbl">Past checks</div>
+    <div class="group" data-sq="22" id="aPast"><div class="empty">Loading…</div></div>
+  </div>
 </div>
 
 <script type="module">
-  import { start, db, $, esc, idealFor, fmtNum, fmtMult, isoDate, niceDate, byName, refreshUI } from './js/app.js';
-  import { collection, getDocs, doc, getDoc, query, where, orderBy, limit, documentId }
+  import { start, db, api, $, esc, fmtNum, isoDate, niceDate, blockOf, nextBlock, blockLabel, BLOCK_NAME,
+           refreshUI, byName, CHEV } from './js/app.js';
+  import { blockData, festNote } from './js/check.js';
+  import { openCounter } from './js/wheel.js';
+  import { doc, setDoc, collection, getDocs, query, where, orderBy, limit, documentId, serverTimestamp }
     from 'https://www.gstatic.com/firebasejs/12.19.0/firebase-firestore.js';
 
-  const { isAdmin } = await start({ tab: 'today' });
+  const { user, profile, isAdmin } = await start({ tab: 'today' });
   const today = isoDate();
+  const block = blockOf(today);
+  const say = (el, t) => { $(el).textContent = t; $(el).hidden = !t; };
+  const time = ts => ts?.toDate ? ts.toDate().toLocaleString('en-AU', { weekday: 'short', hour: 'numeric', minute: '2-digit' }) : '';
 
-  // load everything once, then work out any date from it
-  const [itemSnap, groupSnap] = await Promise.all([
-    getDocs(collection(db, 'items')), getDocs(collection(db, 'groups'))]);
-  const items = itemSnap.docs.map(d => ({ id: d.id, ...d.data() })).sort(byName);
-  const groups = Object.fromEntries(groupSnap.docs.map(d => [d.id, { id: d.id, ...d.data() }]));
+  $('#date').textContent = niceDate(today, { weekday: 'long', day: 'numeric', month: 'long' });
+  import('./js/push.js').then(m => m.offer($('#pushBox'))).catch(e => console.warn(e));
 
-  async function show(day) {
-    const isToday = day === today;
-    $('#title').textContent = isToday ? 'Today' : niceDate(day, { weekday: 'long' });
-    $('#date').textContent = niceDate(day, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
-    $('#pick').value = day;
-    $('#back').hidden = isToday;
+  const data = await blockData(block);
+  $('#blockName').firstChild.textContent = `${BLOCK_NAME[block.type]} block`;
+  $('#blockNote').textContent = `${blockLabel(block)} · ` + (data.fest.length
+    ? `${festNote(data.fest)}, amounts include the extra`
+    : 'normal days');
 
-    const d = await getDoc(doc(db, 'dates', day));
-    const group = d.exists() ? groups[d.data().group] || null : null;
-    const custom = group ? Object.keys(group.rules || {}).filter(id => items.some(i => i.id === id)).length : 0;
-    $('#gname').firstChild.textContent = group ? group.name : 'Normal';
-    $('#gnote').textContent = group
-      ? (custom ? `${custom} item${custom > 1 ? 's' : ''} with their own amount` : 'Same multiplier for every item')
-      : 'Normal ideal amounts';
-    $('#gmult').textContent = group ? fmtMult(group.multiplier) : '1x';
+  if (isAdmin) await adminView(); else await checkerView();
+  refreshUI();
 
-    $('#list').innerHTML = items.length
-      ? items.map(i => `
-        <div class="row">
-          <div class="label">${esc(i.name)}${group && idealFor(i, group) !== idealFor(i, null)
-            ? `<small>Normal ${fmtNum(i.ideal)} ${esc(i.unit)}</small>` : ''}</div>
-          <div class="amt">${fmtNum(idealFor(i, group))}<span class="unit">${esc(i.unit)}</span></div>
-        </div>`).join('')
-      : `<div class="empty">No items yet.${isAdmin ? ' Add them in the Items tab.' : ''}</div>`;
-    refreshUI();
+  /* ================= checker ================= */
+  async function checkerView() {
+    $('#checker').hidden = false;
+    $('#title').textContent = 'Stock check';
+    const { check, lines } = data;
+    if (check?.status === 'submitted') return checkerDone(check);
+
+    $('#cTodo').hidden = false;
+    const counts = { ...(check?.counts || {}) };
+    let saving = Promise.resolve();
+
+    function draw() {
+      const n = lines.filter(l => counts[l.id] != null).length;
+      $('#cProgress').textContent = `Counted ${n} of ${lines.length}`;
+      $('#cList').innerHTML = lines.length ? lines.map((l, i) => `
+        <div class="row" data-tap data-i="${i}" style="cursor:pointer">
+          <div class="label">${esc(l.name)}</div>
+          ${counts[l.id] != null
+            ? `<div class="amt">${fmtNum(counts[l.id])}<span class="unit">${esc(l.unit)}</span></div>`
+            : `<div class="todo">Tap to count</div>`}
+        </div>`).join('') : '<div class="empty">No items to count yet. Ask the admin to add items.</div>';
+      $('#cSubmit').hidden = !lines.length;
+      refreshUI();
+    }
+    draw();
+
+    // save counts to the database as they are entered, so nothing is lost
+    const store = extra => (saving = saving.then(() => setDoc(doc(db, 'checks', block.start), {
+      start: block.start, type: block.type, days: block.days, status: 'draft',
+      counts, updatedAt: serverTimestamp(), ...extra,
+    }, { merge: true })).catch(e => { console.error(e); say('#cErr', 'Could not save. Check your internet.'); }));
+
+    async function count(i) {
+      const l = lines[i];
+      const r = await openCounter({ name: l.name, unit: l.unit, value: counts[l.id], max: l.target, hasNext: i < lines.length - 1 });
+      if (!r) return;
+      counts[l.id] = r.value;
+      say('#cErr', '');
+      draw(); store();
+      if (r.next) count(i + 1);
+    }
+    $('#cList').addEventListener('click', e => { const r = e.target.closest('[data-i]'); if (r) count(+r.dataset.i); });
+
+    $('#cSubmit').addEventListener('click', async () => {
+      const missing = lines.filter(l => counts[l.id] == null);
+      if (missing.length && !confirm(`${missing.length} item${missing.length > 1 ? 's are' : ' is'} not counted:\n${missing.slice(0, 8).map(l => l.name).join(', ')}${missing.length > 8 ? '…' : ''}\n\nCount ${missing.length > 1 ? 'them' : 'it'} as 0 and submit?`)) return;
+      missing.forEach(l => counts[l.id] = 0);
+      $('#cSubmit').disabled = true; $('#cSubmit').textContent = 'Submitting…';
+      // freeze the amounts this check was made against
+      const frozen = Object.fromEntries(lines.map(l => [l.id, { name: l.name, unit: l.unit, target: l.target }]));
+      try {
+        await saving;
+        await setDoc(doc(db, 'checks', block.start), {
+          start: block.start, type: block.type, days: block.days, counts, lines: frozen,
+          status: 'submitted', by: user.uid, byName: profile.name || user.email, submittedAt: serverTimestamp(),
+        }, { merge: true });
+        api('submitted', { block: block.start }).catch(e => console.warn('admin not notified', e));
+        location.reload();
+      } catch (e) {
+        console.error(e); say('#cErr', 'Could not submit. Check your internet and try again.');
+        $('#cSubmit').disabled = false; $('#cSubmit').textContent = 'Submit stock check';
+      }
+    });
   }
 
-  // next few dates that use a festival group
-  async function soon() {
-    const q = query(collection(db, 'dates'), where(documentId(), '>=', today), orderBy(documentId()), limit(6));
-    const rows = (await getDocs(q)).docs.filter(d => groups[d.data().group]);
-    $('#soon').innerHTML = rows.length
-      ? rows.map(d => `<div class="row" data-tap data-day="${d.id}" style="cursor:pointer">
-          <div class="label">${esc(groups[d.data().group].name)}</div>
-          <div class="val">${d.id === today ? 'Today' : niceDate(d.id)}</div></div>`).join('')
-      : '<div class="empty">No festival days coming up. Every day uses Normal.</div>';
-    refreshUI();
+  function checkerDone(check) {
+    $('#cDone').hidden = false;
+    $('#cDoneText').innerHTML = `Done<small>Submitted by ${esc(check.byName || '')} · ${esc(time(check.submittedAt))}</small>`;
+    $('#cSeeMine').href = `check.html?block=${block.start}&v=inputs`;
+    const nb = nextBlock(block);
+    $('#cNext').textContent = `Next check: ${niceDate(nb.start, { weekday: 'long', day: 'numeric', month: 'short' })}.`;
   }
 
-  $('#pick').addEventListener('change', e => e.target.value && show(e.target.value));
-  $('#backbtn').addEventListener('click', () => show(today));
-  $('#soon').addEventListener('click', e => {
-    const r = e.target.closest('[data-day]');
-    if (r) { show(r.dataset.day); scrollTo({ top: 0, behavior: 'smooth' }); }
-  });
+  /* ================= admin ================= */
+  async function adminView() {
+    $('#admin').hidden = false;
+    const { check, lines } = data;
+    const link = (v, label, primary, sub) => `<a class="btn${primary ? '' : ' frost'}" data-press style="text-align:center;text-decoration:none"
+        href="${v.includes('.html') ? v : `check.html?block=${block.start}&v=${v}`}">${label}</a>`;
+    const listRow = `<a class="row" data-tap href="check.html?block=${block.start}&v=list" style="color:inherit;text-decoration:none">
+        <div class="label">This block's list<small>${lines.length} items and how much of each is needed</small></div>${CHEV}</a>`;
 
-  await Promise.all([show(today), soon()]);
+    if (check?.status === 'submitted') {
+      const short = lines.filter(l => l.order > 0).length;
+      $('#aStatus').innerHTML = `
+        <div class="row status"><span class="dot ok"></span>
+          <div class="label">Checked<small>by ${esc(check.byName || '')} · ${esc(time(check.submittedAt))}</small></div>
+          <div class="val">${short} to buy</div></div>`;
+      let actions = link('inputs', 'See inputs', false) + link('report', 'Order report', !check.reportSeenAt);
+      if (check.reportSeenAt) actions += link(`invoice.html?block=${block.start}`, check.invoice ? 'Invoice' : 'Upload invoice', !check.invoice);
+      if (check.invoice) actions += link('missing', 'Still missing', true);
+      $('#aActions').innerHTML = actions;
+    } else {
+      const n = Object.keys(check?.counts || {}).length;
+      $('#aStatus').innerHTML = `
+        <div class="row status"><span class="dot"></span>
+          <div class="label">Not done yet<small>${n ? `${esc(check.byName || 'A checker')} has counted ${n} of ${lines.length}` : 'Nobody has started counting'}</small></div></div>
+        ${listRow}`;
+      await notifyPicker();
+    }
+    await past();
+  }
+
+  async function notifyPicker() {
+    $('#aNotify').hidden = false;
+    const people = (await getDocs(query(collection(db, 'users'), where('role', '==', 'checker'))))
+      .docs.map(d => ({ id: d.id, ...d.data() })).sort(byName);
+    const TICK = '<div class="tick"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></div>';
+    $('#aCheckers').innerHTML = people.length ? people.map(p => `
+      <div class="row sel" data-tap data-id="${p.id}" style="cursor:pointer">${TICK}<div class="label">${esc(p.name)}</div></div>`).join('')
+      : '<div class="empty">No checkers yet. Add them in Account → Checkers.</div>';
+    $('#aSend').hidden = !people.length;
+    $('#aCheckers').addEventListener('click', e => e.target.closest('[data-id]')?.classList.toggle('sel'));
+    $('#aSend').addEventListener('click', async () => {
+      say('#aErr', ''); say('#aOk', '');
+      const uids = [...document.querySelectorAll('#aCheckers .row.sel')].map(r => r.dataset.id);
+      if (!uids.length) return say('#aErr', 'Tick at least one checker.');
+      $('#aSend').disabled = true;
+      try {
+        const r = await api('notify', { uids, block: block.start });
+        const names = people.filter(p => r.noPhone?.includes(p.id)).map(p => p.name);
+        say('#aOk', (r.sent ? `Sent to ${r.sent} phone${r.sent > 1 ? 's' : ''}.` : 'Nothing was sent.') +
+          (names.length ? ` ${names.join(', ')} ${names.length > 1 ? 'have' : 'has'} not turned on notifications yet.` : ''));
+      } catch (e) {
+        console.error(e);
+        say('#aErr', e.status === 503 ? 'Notifications are not set up on the server yet.' : 'Could not send. Check your internet and try again.');
+      }
+      $('#aSend').disabled = false;
+    });
+  }
+
+  async function past() {
+    const q = query(collection(db, 'checks'), where('start', '<', block.start), orderBy('start', 'desc'), limit(8));
+    const rows = (await getDocs(q)).docs;
+    $('#aPast').innerHTML = rows.length ? rows.map(d => {
+      const c = d.data(), b = blockOf(d.id);
+      const state = c.status !== 'submitted' ? 'Not submitted' : c.invoice ? 'Invoice checked' : 'Checked';
+      return `<a class="row" data-tap href="check.html?block=${d.id}&v=${c.status === 'submitted' ? 'report' : 'inputs'}" style="color:inherit;text-decoration:none">
+        <div class="label">${blockLabel(b)}<small>${state}${c.byName ? ' · ' + esc(c.byName) : ''}</small></div>${CHEV}</a>`;
+    }).join('') : '<div class="empty">No past checks yet.</div>';
+  }
 </script>
 </body>
 </html>

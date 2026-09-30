@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Today · Stock</title>
+<link rel="stylesheet" href="apple-ui/apple-ui.css">
+<script src="js/theme.js"></script>
+</head>
+<body>
+
+<div class="page wait">
+  <h1 class="title" id="title">Today</h1>
+  <p class="sub" id="date"></p>
+
+  <div class="group" data-sq="22">
+    <div class="row">
+      <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l2.4 5.3 5.6.6-4.2 3.9 1.2 5.7L12 15.7 6.9 18.5l1.2-5.7L4 8.9l5.6-.6z"/></svg></div>
+      <div class="label" id="gname">…<small id="gnote"></small></div><div class="val" id="gmult"></div>
+    </div>
+  </div>
+
+  <div class="lbl">Ideal amounts</div>
+  <div class="group plain" data-sq="22" id="list"><div class="empty">Loading…</div></div>
+
+  <div class="lbl">See another day</div>
+  <div class="group plain" data-sq="22">
+    <div class="row"><div class="key">Date</div><input class="field right" type="date" id="pick"></div>
+  </div>
+  <p class="hint" id="back" hidden><button class="link" id="backbtn">Back to today</button></p>
+
+  <div class="lbl">Coming up</div>
+  <div class="group plain" data-sq="22" id="soon"><div class="empty">Loading…</div></div>
+</div>
+
+<script type="module">
+  import { start, db, $, esc, idealFor, fmtNum, fmtMult, isoDate, niceDate, byName, refreshUI } from './js/app.js';
+  import { collection, getDocs, doc, getDoc, query, where, orderBy, limit, documentId }
+    from 'https://www.gstatic.com/firebasejs/12.19.0/firebase-firestore.js';
+
+  const { isAdmin } = await start({ tab: 'today' });
+  const today = isoDate();
+
+  // load everything once, then work out any date from it
+  const [itemSnap, groupSnap] = await Promise.all([
+    getDocs(collection(db, 'items')), getDocs(collection(db, 'groups'))]);
+  const items = itemSnap.docs.map(d => ({ id: d.id, ...d.data() })).sort(byName);
+  const groups = Object.fromEntries(groupSnap.docs.map(d => [d.id, { id: d.id, ...d.data() }]));
+
+  async function show(day) {
+    const isToday = day === today;
+    $('#title').textContent = isToday ? 'Today' : niceDate(day, { weekday: 'long' });
+    $('#date').textContent = niceDate(day, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+    $('#pick').value = day;
+    $('#back').hidden = isToday;
+
+    const d = await getDoc(doc(db, 'dates', day));
+    const group = d.exists() ? groups[d.data().group] || null : null;
+    const custom = group ? Object.keys(group.rules || {}).filter(id => items.some(i => i.id === id)).length : 0;
+    $('#gname').firstChild.textContent = group ? group.name : 'Normal';
+    $('#gnote').textContent = group
+      ? (custom ? `${custom} item${custom > 1 ? 's' : ''} with their own amount` : 'Same multiplier for every item')
+      : 'Normal ideal amounts';
+    $('#gmult').textContent = group ? fmtMult(group.multiplier) : '1x';
+
+    $('#list').innerHTML = items.length
+      ? items.map(i => `
+        <div class="row">
+          <div class="label">${esc(i.name)}${group && idealFor(i, group) !== idealFor(i, null)
+            ? `<small>Normal ${fmtNum(i.ideal)} ${esc(i.unit)}</small>` : ''}</div>
+          <div class="amt">${fmtNum(idealFor(i, group))}<span class="unit">${esc(i.unit)}</span></div>
+        </div>`).join('')
+      : `<div class="empty">No items yet.${isAdmin ? ' Add them in the Items tab.' : ''}</div>`;
+    refreshUI();
+  }
+
+  // next few dates that use a festival group
+  async function soon() {
+    const q = query(collection(db, 'dates'), where(documentId(), '>=', today), orderBy(documentId()), limit(6));
+    const rows = (await getDocs(q)).docs.filter(d => groups[d.data().group]);
+    $('#soon').innerHTML = rows.length
+      ? rows.map(d => `<div class="row" data-tap data-day="${d.id}" style="cursor:pointer">
+          <div class="label">${esc(groups[d.data().group].name)}</div>
+          <div class="val">${d.id === today ? 'Today' : niceDate(d.id)}</div></div>`).join('')
+      : '<div class="empty">No festival days coming up. Every day uses Normal.</div>';
+    refreshUI();
+  }
+
+  $('#pick').addEventListener('change', e => e.target.value && show(e.target.value));
+  $('#backbtn').addEventListener('click', () => show(today));
+  $('#soon').addEventListener('click', e => {
+    const r = e.target.closest('[data-day]');
+    if (r) { show(r.dataset.day); scrollTo({ top: 0, behavior: 'smooth' }); }
+  });
+
+  await Promise.all([show(today), soon()]);
+</script>
+</body>
+</html>

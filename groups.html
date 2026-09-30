@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Groups · Stock</title>
+<link rel="stylesheet" href="apple-ui/apple-ui.css">
+<script src="js/theme.js"></script>
+</head>
+<body>
+
+<div class="page wait">
+  <div class="topbar">
+    <span></span>
+    <a class="icon-btn" aria-label="Add group" href="group.html">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+    </a>
+  </div>
+
+  <h1 class="title">Day groups</h1>
+  <p class="sub">Each day uses one group. Any day you have not given a group uses Normal.</p>
+
+  <div class="group" data-sq="22">
+    <a class="row" data-tap href="items.html" style="color:inherit;text-decoration:none">
+      <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="5" width="17" height="15.5" rx="3"/><path d="M3.5 10h17M8 3v4M16 3v4"/></svg></div>
+      <div class="label">Normal<small>Each item's ideal amount</small></div>
+      <div class="val">1x</div>
+      <div class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round"><path d="M9 6l6 6-6 6"/></svg></div>
+    </a>
+  </div>
+
+  <div class="lbl">Festival groups</div>
+  <div class="group" data-sq="22" id="list"><div class="empty">Loading…</div></div>
+</div>
+
+<script type="module">
+  import { start, db, $, esc, fmtMult, isoDate, niceDate, byName, refreshUI, CHEV } from './js/app.js';
+  import { collection, getDocs, query, where, documentId }
+    from 'https://www.gstatic.com/firebasejs/12.19.0/firebase-firestore.js';
+
+  await start({ tab: 'groups', adminOnly: true });
+  const today = isoDate();
+
+  const [gs, ds] = await Promise.all([
+    getDocs(collection(db, 'groups')),
+    getDocs(query(collection(db, 'dates'), where(documentId(), '>=', today)))]);
+  const groups = gs.docs.map(d => ({ id: d.id, ...d.data() })).sort(byName);
+  const upcoming = {};
+  ds.docs.forEach(d => (upcoming[d.data().group] ||= []).push(d.id));
+
+  $('#list').innerHTML = groups.length ? groups.map(g => {
+    const days = (upcoming[g.id] || []).sort();
+    const note = days.length
+      ? `Next: ${days[0] === today ? 'today' : niceDate(days[0], { day: 'numeric', month: 'short' })}${days.length > 1 ? ` · ${days.length} days coming up` : ''}`
+      : 'No dates coming up';
+    return `
+    <a class="row" data-tap href="group.html?id=${encodeURIComponent(g.id)}" style="color:inherit;text-decoration:none">
+      <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l2.4 5.3 5.6.6-4.2 3.9 1.2 5.7L12 15.7 6.9 18.5l1.2-5.7L4 8.9l5.6-.6z"/></svg></div>
+      <div class="label">${esc(g.name)}<small>${note}</small></div>
+      <div class="val">${fmtMult(g.multiplier)}</div>${CHEV}
+    </a>`;
+  }).join('') : '<div class="empty">No festival groups yet. Tap + to add one, like "Diwali".</div>';
+  refreshUI();
+</script>
+</body>
+</html>

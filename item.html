@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Item · Stock</title>
+<link rel="stylesheet" href="apple-ui/apple-ui.css">
+<script src="js/theme.js"></script>
+</head>
+<body>
+
+<div class="page wait">
+  <div class="topbar">
+    <a class="icon-btn" aria-label="Back" href="items.html">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 6l-6 6 6 6"/></svg>
+    </a>
+  </div>
+
+  <h1 class="title" id="title">New item</h1>
+  <p class="sub">The normal ideal amount is how much should be in the store on a normal day.</p>
+
+  <form id="form" novalidate>
+    <div class="group plain" data-sq="22">
+      <div class="row"><div class="key">Name</div><input class="field right" id="name" placeholder="e.g. Onions" maxlength="80" autocomplete="off"></div>
+      <div class="row"><div class="key">Unit</div><select class="field right" id="unit"></select></div>
+      <div class="row"><div class="key">Ideal amount</div><input class="field right" id="ideal" type="number" inputmode="decimal" min="0" step="any" placeholder="0"><span class="unit" id="unitlbl"></span></div>
+    </div>
+    <p class="error-text" id="err" hidden></p>
+    <button class="btn" data-press type="submit" id="save">Save</button>
+  </form>
+  <button class="btn frost danger" data-press id="del" hidden>Delete item</button>
+</div>
+
+<script type="module">
+  import { start, db, $, param, UNITS, refreshUI } from './js/app.js';
+  import { collection, doc, getDoc, getDocs, addDoc, updateDoc, writeBatch, deleteField, serverTimestamp }
+    from 'https://www.gstatic.com/firebasejs/12.19.0/firebase-firestore.js';
+
+  await start({ tab: 'items', adminOnly: true });
+  const id = param('id');
+  const err = t => { $('#err').textContent = t; $('#err').hidden = !t; };
+
+  let item = null;
+  if (id) {
+    const s = await getDoc(doc(db, 'items', id));
+    if (!s.exists()) { location.replace('items.html'); await new Promise(() => {}); }
+    item = s.data();
+  }
+
+  // units list, keeping any old unit that is not in the list any more
+  const units = item && !UNITS.includes(item.unit) ? [...UNITS, item.unit] : UNITS;
+  $('#unit').innerHTML = units.map(u => `<option>${u}</option>`).join('');
+  const syncUnit = () => $('#unitlbl').textContent = $('#unit').value;
+  $('#unit').addEventListener('change', syncUnit);
+
+  if (item) {
+    $('#title').textContent = item.name;
+    document.title = item.name + ' · Stock';
+    $('#name').value = item.name; $('#unit').value = item.unit; $('#ideal').value = item.ideal;
+    $('#del').hidden = false;
+  } else {
+    $('#name').focus();
+  }
+  syncUnit();
+  refreshUI();
+
+  $('#form').addEventListener('submit', async e => {
+    e.preventDefault(); err('');
+    const name = $('#name').value.trim().replace(/\s+/g, ' ');
+    const unit = $('#unit').value;
+    const ideal = Number($('#ideal').value);
+    if (!name) return err('Give the item a name.');
+    if ($('#ideal').value === '' || !isFinite(ideal) || ideal < 0) return err('Enter the ideal amount as a number, like 10 or 2.5.');
+
+    // stop two items with the same name
+    const all = (await getDocs(collection(db, 'items'))).docs;
+    if (all.some(d => d.id !== id && d.data().name.toLowerCase() === name.toLowerCase()))
+      return err(`There is already an item called "${name}".`);
+
+    $('#save').disabled = true; $('#save').textContent = 'Saving…';
+    try {
+      if (id) await updateDoc(doc(db, 'items', id), { name, unit, ideal });
+      else await addDoc(collection(db, 'items'), { name, unit, ideal, created: serverTimestamp() });
+      location.href = 'items.html';
+    } catch (ex) {
+      console.error(ex); err('Could not save. Check your internet and try again.');
+      $('#save').disabled = false; $('#save').textContent = 'Save';
+    }
+  });
+
+  $('#del').addEventListener('click', async () => {
+    if (!confirm(`Delete "${item.name}"? It will also be removed from every festival group.`)) return;
+    try {
+      // remove the item and any festival settings for it, all at once
+      const batch = writeBatch(db);
+      batch.delete(doc(db, 'items', id));
+      (await getDocs(collection(db, 'groups'))).docs.forEach(g => {
+        if (g.data().rules?.[id]) batch.update(g.ref, { ['rules.' + id]: deleteField() });
+      });
+      await batch.commit();
+      location.href = 'items.html';
+    } catch (ex) { console.error(ex); err('Could not delete. Check your internet and try again.'); }
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Items · Stock</title>
+<link rel="stylesheet" href="apple-ui/apple-ui.css">
+<script src="js/theme.js"></script>
+</head>
+<body>
+
+<div class="page wait">
+  <div class="topbar">
+    <span></span>
+    <a class="icon-btn" aria-label="Add item" href="item.html">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+    </a>
+  </div>
+
+  <h1 class="title">Items</h1>
+  <p class="sub" id="count">Everything the restaurant keeps in stock, with its normal ideal amount.</p>
+
+  <div class="group plain" data-sq="22" id="searchbox" hidden>
+    <div class="row"><input class="field" id="search" type="search" placeholder="Search items"></div>
+  </div>
+
+  <div class="lbl">Normal ideal amounts</div>
+  <div class="group" data-sq="22" id="list"><div class="empty">Loading…</div></div>
+</div>
+
+<script type="module">
+  import { start, db, $, esc, fmtNum, byName, refreshUI, CHEV } from './js/app.js';
+  import { collection, getDocs } from 'https://www.gstatic.com/firebasejs/12.19.0/firebase-firestore.js';
+
+  await start({ tab: 'items', adminOnly: true });
+
+  const items = (await getDocs(collection(db, 'items'))).docs.map(d => ({ id: d.id, ...d.data() })).sort(byName);
+  $('#count').textContent = items.length
+    ? `${items.length} item${items.length > 1 ? 's' : ''}. Tap one to change or delete it.`
+    : 'Everything the restaurant keeps in stock, with its normal ideal amount.';
+  $('#searchbox').hidden = items.length < 8;
+
+  function draw(filter = '') {
+    const f = filter.trim().toLowerCase();
+    const shown = items.filter(i => i.name.toLowerCase().includes(f));
+    $('#list').innerHTML = !items.length
+      ? '<div class="empty">No items yet. Tap + to add the first one.</div>'
+      : !shown.length ? '<div class="empty">No item matches.</div>'
+      : shown.map(i => `
+        <a class="row" data-tap href="item.html?id=${encodeURIComponent(i.id)}" style="color:inherit;text-decoration:none">
+          <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8l8-4 8 4-8 4z"/><path d="M4 8v8l8 4 8-4V8M12 12v8"/></svg></div>
+          <div class="label">${esc(i.name)}</div>
+          <div class="val">${fmtNum(i.ideal)} ${esc(i.unit)}</div>${CHEV}
+        </a>`).join('');
+    refreshUI();
+  }
+  $('#search').addEventListener('input', e => draw(e.target.value));
+  draw();
+</script>
+</body>
+</html>

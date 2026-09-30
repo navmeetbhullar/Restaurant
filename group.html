@@ -1,0 +1,260 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Group · Stock</title>
+<link rel="stylesheet" href="apple-ui/apple-ui.css">
+<script src="js/theme.js"></script>
+</head>
+<body>
+
+<div class="page wait">
+  <div class="topbar">
+    <a class="icon-btn" aria-label="Back" href="groups.html">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 6l-6 6 6 6"/></svg>
+    </a>
+  </div>
+
+  <h1 class="title" id="title">New group</h1>
+  <p class="sub" id="intro">A group for busy days, like a festival. Set how much more of everything you need.</p>
+
+  <div class="group plain" data-sq="22">
+    <div class="row"><div class="key">Name</div><input class="field right" id="name" placeholder="e.g. Diwali" maxlength="60" autocomplete="off"></div>
+  </div>
+
+  <div class="lbl">All items</div>
+  <div class="seg" id="mult">
+    <button data-m="1">1x</button><button data-m="2">2x</button><button data-m="3">3x</button><button data-m="custom">Custom</button>
+  </div>
+  <div class="group plain" data-sq="22" id="customBox" style="margin-top:11px" hidden>
+    <div class="row"><div class="key">Multiplier</div><input class="field right" id="custom" type="number" inputmode="decimal" min="0.1" step="any" placeholder="e.g. 1.5"><span class="unit">x</span></div>
+  </div>
+  <p class="hint" id="multHint"></p>
+
+  <div id="more" hidden>
+    <div class="lbl">Each item</div>
+    <div class="group plain" data-sq="22" id="rules"></div>
+    <p class="hint">"Group" uses the multiplier above. "Multiply" sets this item's own multiplier. "Amount" sets an exact amount.</p>
+  </div>
+
+  <p class="error-text" id="err" hidden></p>
+  <p class="ok-text" id="ok" hidden></p>
+  <button class="btn" data-press id="save">Save group</button>
+
+  <div id="datesBox" hidden>
+    <div class="lbl">Dates using this group</div>
+    <div class="group plain" data-sq="22" id="dates"></div>
+
+    <div class="lbl">Add dates</div>
+    <div class="group plain" data-sq="22">
+      <div class="row"><div class="key">From</div><input class="field right" type="date" id="from"></div>
+      <div class="row"><div class="key">To</div><input class="field right" type="date" id="to"></div>
+    </div>
+    <p class="hint">For one day, leave "To" empty.</p>
+    <p class="error-text" id="derr" hidden></p>
+    <button class="btn frost" data-press id="addDates">Add dates</button>
+
+    <button class="btn frost danger" data-press id="del" style="margin-top:40px">Delete group</button>
+  </div>
+</div>
+
+<script type="module">
+  import { start, db, $, esc, param, idealFor, fmtNum, fmtMult, isoDate, niceDate, fromIso, byName, refreshUI } from './js/app.js';
+  import { collection, doc, getDoc, getDocs, addDoc, updateDoc, deleteDoc, writeBatch, query, where, documentId }
+    from 'https://www.gstatic.com/firebasejs/12.19.0/firebase-firestore.js';
+
+  await start({ tab: 'groups', adminOnly: true });
+  const id = param('id');
+  const today = isoDate();
+  const say = (el, t) => { $(el).textContent = t; $(el).hidden = !t; };
+
+  let g = { name: '', multiplier: 2, rules: {} };
+  if (id) {
+    const s = await getDoc(doc(db, 'groups', id));
+    if (!s.exists()) { location.replace('groups.html'); await new Promise(() => {}); }
+    g = { rules: {}, ...s.data() };
+  }
+  const items = id ? (await getDocs(collection(db, 'items'))).docs.map(d => ({ id: d.id, ...d.data() })).sort(byName) : [];
+  // work on a copy; nothing is saved until "Save group"
+  const rules = structuredClone(g.rules || {});
+  let multiplier = g.multiplier;
+  let dirty = false;
+  const touch = () => { dirty = true; say('#ok', ''); };
+
+  /* ---------- name + multiplier ---------- */
+  $('#name').value = g.name;
+  if (id) {
+    $('#title').textContent = g.name;
+    document.title = g.name + ' · Stock';
+    $('#intro').textContent = 'Set the amounts for this group, then choose the dates that use it.';
+    $('#more').hidden = $('#datesBox').hidden = false;
+  }
+  $('#name').addEventListener('input', touch);
+
+  function markMult(customMode) {
+    const preset = !customMode && [1, 2, 3].includes(multiplier);
+    document.querySelectorAll('#mult button').forEach(b =>
+      b.classList.toggle('on', preset ? +b.dataset.m === multiplier : b.dataset.m === 'custom'));
+    $('#customBox').hidden = preset;
+    if (!preset && document.activeElement !== $('#custom')) $('#custom').value = multiplier || '';
+    $('#multHint').textContent = `Every item needs ${fmtMult(multiplier || 0)} its normal ideal amount, unless you change it below.`;
+    refreshUI();
+  }
+  $('#mult').addEventListener('click', e => {
+    const b = e.target.closest('button'); if (!b) return;
+    touch();
+    if (b.dataset.m === 'custom') { markMult(true); $('#custom').focus(); }
+    else { multiplier = +b.dataset.m; markMult(); drawRules(); }
+  });
+  $('#custom').addEventListener('input', () => {
+    touch(); multiplier = Number($('#custom').value) || 0; markMult(true); drawRules();
+  });
+  markMult();
+
+  /* ---------- per-item settings ---------- */
+  const MODES = [['auto', 'Group'], ['x', 'Multiply'], ['amt', 'Amount']];
+  function preview(item) {
+    const v = idealFor(item, { multiplier, rules });
+    return `Normal ${fmtNum(item.ideal)} ${esc(item.unit)} → <b style="color:var(--ink)">${fmtNum(v)} ${esc(item.unit)}</b>`;
+  }
+  function drawRules() {
+    if (!id) return;
+    $('#rules').innerHTML = items.length ? items.map(i => {
+      const r = rules[i.id]; const mode = r?.mode || 'auto';
+      return `
+      <div class="row rule" data-id="${i.id}">
+        <div class="label">${esc(i.name)}<small class="pv">${preview(i)}</small></div>
+        <div class="ctrl">
+          <div class="seg mini">${MODES.map(([m, t]) => `<button data-mode="${m}" class="${m === mode ? 'on' : ''}">${t}</button>`).join('')}</div>
+          <input class="field" type="number" inputmode="decimal" min="0" step="any" ${mode === 'auto' ? 'hidden' : ''}
+            value="${r ? r.value : ''}" placeholder="${mode === 'x' ? 'e.g. 2.5' : 'amount'}" aria-label="${esc(i.name)} value">
+          <span class="unit" ${mode === 'auto' ? 'hidden' : ''}>${mode === 'x' ? 'x' : esc(i.unit)}</span>
+        </div>
+      </div>`;
+    }).join('') : '<div class="empty">No items yet. Add items in the Items tab first.</div>';
+    refreshUI();
+  }
+  $('#rules').addEventListener('click', e => {
+    const b = e.target.closest('button[data-mode]'); if (!b) return;
+    const row = b.closest('.row'), item = items.find(i => i.id === row.dataset.id), m = b.dataset.mode;
+    touch();
+    if (m === 'auto') delete rules[item.id];
+    else {
+      // start with a sensible number so the preview makes sense straight away
+      const now = idealFor(item, { multiplier, rules });
+      rules[item.id] = { mode: m, value: m === 'x' ? (rules[item.id]?.mode === 'x' ? rules[item.id].value : multiplier) : now };
+    }
+    drawRules();
+    row.isConnected || $(`.row[data-id="${item.id}"] input`)?.focus();
+  });
+  $('#rules').addEventListener('input', e => {
+    const row = e.target.closest('.row'); if (!row) return;
+    const item = items.find(i => i.id === row.dataset.id);
+    touch();
+    rules[item.id].value = e.target.value === '' ? NaN : Number(e.target.value);
+    row.querySelector('.pv').innerHTML = preview(item);
+  });
+  drawRules();
+
+  /* ---------- save ---------- */
+  $('#save').addEventListener('click', async () => {
+    say('#err', ''); say('#ok', '');
+    const name = $('#name').value.trim().replace(/\s+/g, ' ');
+    if (!name) return say('#err', 'Give the group a name, like "Diwali".');
+    if (name.toLowerCase() === 'normal') return say('#err', '"Normal" is already used. Pick another name.');
+    if (!(multiplier > 0)) return say('#err', 'The multiplier must be more than 0, like 1.5 or 2.');
+    for (const i of items) {
+      const r = rules[i.id]; if (!r) continue;
+      if (!isFinite(r.value) || r.value < 0 || (r.mode === 'x' && r.value === 0))
+        return say('#err', `Check the number for ${i.name}.`);
+    }
+    const all = (await getDocs(collection(db, 'groups'))).docs;
+    if (all.some(d => d.id !== id && d.data().name.toLowerCase() === name.toLowerCase()))
+      return say('#err', `There is already a group called "${name}".`);
+
+    $('#save').disabled = true; $('#save').textContent = 'Saving…';
+    try {
+      // keep only rules for items that still exist
+      const clean = Object.fromEntries(Object.entries(rules).filter(([k]) => items.some(i => i.id === k)));
+      if (id) {
+        await updateDoc(doc(db, 'groups', id), { name, multiplier, rules: clean });
+        dirty = false;
+        $('#title').textContent = name;
+        say('#ok', 'Saved.');
+      } else {
+        const ref = await addDoc(collection(db, 'groups'), { name, multiplier, rules: {} });
+        dirty = false;
+        location.replace('group.html?id=' + ref.id);
+      }
+    } catch (ex) { console.error(ex); say('#err', 'Could not save. Check your internet and try again.'); }
+    $('#save').disabled = false; $('#save').textContent = 'Save group';
+  });
+  addEventListener('beforeunload', e => { if (dirty) e.preventDefault(); });
+
+  /* ---------- dates ---------- */
+  const X = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>';
+  async function drawDates() {
+    const ds = (await getDocs(query(collection(db, 'dates'), where('group', '==', id)))).docs.map(d => d.id).sort();
+    const upcoming = ds.filter(d => d >= today), past = ds.filter(d => d < today).slice(-5);
+    const row = (d, isPast) => `
+      <div class="row${isPast ? ' past' : ''}">
+        <div class="label">${niceDate(d)}${d === today ? '<small>Today</small>' : isPast ? '<small>Past</small>' : ''}</div>
+        <button class="x" data-day="${d}" aria-label="Remove ${d}">${X}</button>
+      </div>`;
+    $('#dates').innerHTML = ds.length
+      ? upcoming.map(d => row(d, false)).join('') + past.map(d => row(d, true)).join('')
+      : '<div class="empty">No dates yet. Until you add some, this group is never used.</div>';
+    refreshUI();
+  }
+  $('#dates').addEventListener('click', async e => {
+    const b = e.target.closest('button[data-day]'); if (!b) return;
+    b.disabled = true;
+    try { await deleteDoc(doc(db, 'dates', b.dataset.day)); } catch (ex) { console.error(ex); }
+    drawDates();
+  });
+
+  $('#from').value = today;
+  $('#from').addEventListener('change', () => { if ($('#to').value && $('#to').value < $('#from').value) $('#to').value = ''; });
+  $('#addDates').addEventListener('click', async () => {
+    say('#derr', '');
+    const from = $('#from').value, to = $('#to').value || from;
+    if (!from) return say('#derr', 'Pick a "From" date.');
+    if (to < from) return say('#derr', '"To" must be the same day as "From", or later.');
+    const days = [];
+    for (let d = fromIso(from); isoDate(d) <= to; d.setDate(d.getDate() + 1)) days.push(isoDate(d));
+    if (days.length > 62) return say('#derr', 'Add at most 62 days at a time.');
+
+    // a day can only have one group: ask before moving days from another group
+    const taken = (await getDocs(query(collection(db, 'dates'), where(documentId(), '>=', from), where(documentId(), '<=', to))))
+      .docs.filter(d => d.data().group !== id);
+    if (taken.length) {
+      const names = Object.fromEntries((await getDocs(collection(db, 'groups'))).docs.map(d => [d.id, d.data().name]));
+      const list = taken.slice(0, 6).map(d => `${niceDate(d.id)} (${names[d.data().group] || 'another group'})`).join('\n');
+      if (!confirm(`These days already use another group:\n${list}${taken.length > 6 ? '\n…' : ''}\n\nMove them to ${g.name}?`)) return;
+    }
+    try {
+      const batch = writeBatch(db);
+      days.forEach(d => batch.set(doc(db, 'dates', d), { group: id }));
+      await batch.commit();
+      $('#to').value = '';
+      drawDates();
+    } catch (ex) { console.error(ex); say('#derr', 'Could not add dates. Check your internet and try again.'); }
+  });
+
+  $('#del').addEventListener('click', async () => {
+    if (!confirm(`Delete "${g.name}"? Its dates will go back to Normal.`)) return;
+    try {
+      const batch = writeBatch(db);
+      (await getDocs(query(collection(db, 'dates'), where('group', '==', id)))).docs.forEach(d => batch.delete(d.ref));
+      batch.delete(doc(db, 'groups', id));
+      await batch.commit();
+      dirty = false;
+      location.href = 'groups.html';
+    } catch (ex) { console.error(ex); say('#err', 'Could not delete. Check your internet and try again.'); }
+  });
+
+  if (id) drawDates();
+</script>
+</body>
+</html>

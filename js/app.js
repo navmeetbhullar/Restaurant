@@ -3,11 +3,11 @@ import { initializeApp } from 'https://www.gstatic.com/firebasejs/12.19.0/fireba
 import { getAuth, initializeAuth, inMemoryPersistence, onAuthStateChanged, signOut, connectAuthEmulator,
   createUserWithEmailAndPassword, signInWithEmailAndPassword }
   from 'https://www.gstatic.com/firebasejs/12.19.0/firebase-auth.js';
-import { getFirestore, doc, getDoc, connectFirestoreEmulator }
+import { getFirestore, doc, getDoc, getDocs, collection, query, where, documentId, connectFirestoreEmulator }
   from 'https://www.gstatic.com/firebasejs/12.19.0/firebase-firestore.js';
 import { firebaseConfig } from './firebase-config.js';
 
-const app = initializeApp(firebaseConfig);
+export const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 export const db = getFirestore(app);
 
@@ -40,38 +40,38 @@ export async function createLogin(email, password) {
   }
 }
 
-/* ---------- units ---------- */
-export const UNITS = ['kg', 'g', 'litres', 'ml', 'pieces', 'packets', 'boxes', 'bottles', 'cans', 'bags', 'trays', 'dozen'];
-// Units you can only have whole numbers of. Amounts in these round up.
-const WHOLE = new Set(['pieces', 'packets', 'boxes', 'bottles', 'cans', 'bags', 'trays']);
-
-/* ---------- ideal amounts ----------
-   group = null means Normal. A group can have its own rule per item:
-   { mode: 'x', value: 2.5 } multiplies, { mode: 'amt', value: 40 } is an exact amount.
-   Items with no rule use the group's multiplier. */
-export function idealFor(item, group) {
-  if (!group) return tidy(item.ideal, item.unit);
-  const r = group.rules?.[item.id];
-  if (r?.mode === 'amt') return tidy(r.value, item.unit);
-  const m = r?.mode === 'x' ? r.value : (group.multiplier ?? 1);
-  return tidy(item.ideal * m, item.unit);
-}
-function tidy(v, unit) {
-  v = Number(v) || 0;
-  if (WHOLE.has(unit)) return Math.ceil(v - 1e-9);
-  return Math.round(v * 100) / 100;
-}
-export const fmtNum = v => (Math.round(v * 100) / 100).toLocaleString(undefined, { maximumFractionDigits: 2 });
-export const fmtMult = m => fmtNum(m) + 'x';
+/* ---------- stock maths (shared with the server) ---------- */
+export * from './stock.js';
+import { fromIso, extraDaysOf, fmtNum } from './stock.js';
+export const fmtExtra = g => {
+  const d = extraDaysOf(g);
+  return d === 0 ? 'Normal' : `+${fmtNum(d)} day${d === 1 ? '' : 's'}`;
+};
 
 /* ---------- dates (always the phone's local day) ---------- */
-export function isoDate(d = new Date()) {
-  const p = n => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
-}
-export function fromIso(s) { const [y, m, d] = s.split('-').map(Number); return new Date(y, m - 1, d); }
 export function niceDate(s, opts = { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' }) {
-  return fromIso(s).toLocaleDateString(undefined, opts);
+  return fromIso(s).toLocaleDateString('en-AU', opts);
+}
+
+// Short range like "Wed 30 Sep – Fri 2 Oct"
+const DAY = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+export const shortDate = s => { const d = fromIso(s); return `${DAY[d.getDay()]} ${d.getDate()} ${MON[d.getMonth()]}`; };
+export const blockLabel = b => `${shortDate(b.start)} – ${shortDate(b.end)}`;
+
+/* ---------- loading stock data ----------
+   Everything needed to work out a block's amounts, in one go. */
+export async function loadStock(block) {
+  const [is, gs, ds] = await Promise.all([
+    getDocs(collection(db, 'items')),
+    getDocs(collection(db, 'groups')),
+    block ? getDocs(query(collection(db, 'dates'),
+      where(documentId(), '>=', block.start), where(documentId(), '<=', block.end))) : null,
+  ]);
+  const items = is.docs.map(d => ({ id: d.id, ...d.data() })).sort(byName);
+  const groups = Object.fromEntries(gs.docs.map(d => [d.id, { id: d.id, rules: {}, ...d.data() }]));
+  const dateGroups = ds ? Object.fromEntries(ds.docs.map(d => [d.id, d.data().group])) : {};
+  return { items, groups, dateGroups };
 }
 
 /* ---------- small helpers ---------- */
@@ -160,6 +160,21 @@ export function start({ tab, adminOnly = false } = {}) {
       resolve({ user, profile, isAdmin: profile.role === 'admin' });
     });
   });
+}
+
+/* ---------- talking to our server (Vercel functions in /api) ----------
+   Sends the logged-in person's Firebase pass so the server knows who asked. */
+export async function api(path, body) {
+  const token = await auth.currentUser?.getIdToken();
+  const res = await fetch('/api/' + path, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: 'Bearer ' + token },
+    body: JSON.stringify(body || {}),
+  });
+  let data = {};
+  try { data = await res.json(); } catch (e) {}
+  if (!res.ok) throw Object.assign(new Error(data.error || 'Server error ' + res.status), { status: res.status, data });
+  return data;
 }
 
 export async function logOut() {

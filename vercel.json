@@ -1,0 +1,9 @@
+{
+  "crons": [
+    { "path": "/api/cron", "schedule": "5 1 * * *" },
+    { "path": "/api/cron", "schedule": "5 2 * * *" }
+  ],
+  "functions": {
+    "api/invoice.js": { "maxDuration": 60 }
+  }
+}

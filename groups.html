@@ -5,6 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Groups · Stock</title>
 <link rel="stylesheet" href="apple-ui/apple-ui.css">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
+<meta name="apple-mobile-web-app-title" content="Stock">
 <script src="js/theme.js"></script>
 </head>
 <body>
@@ -23,8 +26,8 @@
   <div class="group" data-sq="22">
     <a class="row" data-tap href="items.html" style="color:inherit;text-decoration:none">
       <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="5" width="17" height="15.5" rx="3"/><path d="M3.5 10h17M8 3v4M16 3v4"/></svg></div>
-      <div class="label">Normal<small>Each item's ideal amount</small></div>
-      <div class="val">1x</div>
+      <div class="label">Normal<small>Each item's block amount</small></div>
+      <div class="val">No extra</div>
       <div class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round"><path d="M9 6l6 6-6 6"/></svg></div>
     </a>
   </div>
@@ -34,7 +37,7 @@
 </div>
 
 <script type="module">
-  import { start, db, $, esc, fmtMult, isoDate, niceDate, byName, refreshUI, CHEV } from './js/app.js';
+  import { start, db, $, esc, fmtExtra, isoDate, niceDate, byName, refreshUI, CHEV } from './js/app.js';
   import { collection, getDocs, query, where, documentId }
     from 'https://www.gstatic.com/firebasejs/12.19.0/firebase-firestore.js';
 
@@ -57,7 +60,7 @@
     <a class="row" data-tap href="group.html?id=${encodeURIComponent(g.id)}" style="color:inherit;text-decoration:none">
       <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l2.4 5.3 5.6.6-4.2 3.9 1.2 5.7L12 15.7 6.9 18.5l1.2-5.7L4 8.9l5.6-.6z"/></svg></div>
       <div class="label">${esc(g.name)}<small>${note}</small></div>
-      <div class="val">${fmtMult(g.multiplier)}</div>${CHEV}
+      <div class="val">${fmtExtra(g)}</div>${CHEV}
     </a>`;
   }).join('') : '<div class="empty">No festival groups yet. Tap + to add one, like "Diwali".</div>';
   refreshUI();

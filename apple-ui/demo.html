@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Apple UI kit</title>
+<link rel="stylesheet" href="apple-ui.css">
+</head>
+<body>
+
+<div class="page">
+
+  <div class="topbar">
+    <button class="icon-btn" aria-label="Back">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 6l-6 6 6 6"/></svg>
+    </button>
+    <button class="icon-btn" aria-label="Add">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+    </button>
+  </div>
+
+  <h1 class="title">Home</h1>
+  <p class="sub">Every component in the kit, on one page.</p>
+
+  <div class="seg" id="seg">
+    <button data-th="light">Light</button><button data-th="dark">Dark</button><button data-th="auto" class="on">Auto</button>
+  </div>
+
+  <div class="lbl">Stats</div>
+  <div class="stats">
+    <div class="stat g" data-sq="22"><div class="n">12</div><div class="k">Streak</div></div>
+    <div class="stat g" data-sq="22"><div class="n">340</div><div class="k">Points</div></div>
+    <div class="stat" data-sq="22"><div class="n">4</div><div class="k">Absent</div></div>
+  </div>
+
+  <div class="lbl">List with icons</div>
+  <div class="group" data-sq="22">
+    <div class="row" data-tap>
+      <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M6.5 6.5h11v11h-11z"/><path d="M3 9v6M21 9v6"/></svg></div>
+      <div class="label">Workout</div><div class="val">5 items</div>
+      <div class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round"><path d="M9 6l6 6-6 6"/></svg></div>
+    </div>
+    <div class="row" data-tap>
+      <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M12 3v18M5 8h14M5 16h14"/></svg></div>
+      <div class="label">Diet</div><div class="val">3 of 5</div>
+      <div class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round"><path d="M9 6l6 6-6 6"/></svg></div>
+    </div>
+    <div class="row" data-tap>
+      <div class="ic gold"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M12 3l2.4 5.3 5.6.6-4.2 3.9 1.2 5.7L12 15.7 6.9 18.5l1.2-5.7L4 8.9l5.6-.6z"/></svg></div>
+      <div class="label">Premium</div><div class="val">Active</div>
+      <div class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round"><path d="M9 6l6 6-6 6"/></svg></div>
+    </div>
+  </div>
+
+  <div class="lbl">Plain list</div>
+  <div class="group plain" data-sq="22">
+    <div class="row"><div class="label">Plan</div><div class="val">Full gym + cardio</div></div>
+    <div class="row"><div class="label">Shift</div><div class="val">Morning</div></div>
+  </div>
+
+  <div class="lbl">Form</div>
+  <div class="group plain" data-sq="22">
+    <div class="row"><input class="field" type="email" placeholder="Email"></div>
+    <div class="row"><input class="field" type="password" placeholder="Password"></div>
+  </div>
+  <p class="error-text">Example error message</p>
+
+  <div class="lbl">Slider</div>
+  <div class="group plain" data-sq="22">
+    <div class="row slider">
+      <div class="top"><span>Water (litres)</span><b id="water">2.0</b></div>
+      <input type="range" min="0" max="5" step="0.1" value="2" oninput="water.textContent=(+this.value).toFixed(1)">
+    </div>
+  </div>
+
+  <div class="lbl">Buttons</div>
+  <button class="btn" data-press>Primary</button>
+  <button class="btn gold" data-press>Premium action</button>
+  <button class="btn frost" data-press>Secondary</button>
+
+  <p class="footer">Footer text goes here</p>
+</div>
+
+<div class="scrim"></div>
+
+<div class="dock">
+  <nav class="bar" id="bar">
+    <div class="bar__glass"></div>
+    <div class="bar__sheen"></div>
+    <svg class="bar__edge" id="edge" preserveAspectRatio="none">
+      <defs><linearGradient id="rimgrad" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0"    stop-color="var(--rim-hot)"/>
+        <stop offset="0.26" stop-color="var(--rim-cool)"/>
+        <stop offset="0.49" stop-color="transparent"/>
+        <stop offset="0.73" stop-color="var(--rim-cool)"/>
+        <stop offset="1"    stop-color="var(--rim-hot)"/>
+      </linearGradient></defs>
+      <path id="edgePath" stroke="url(#rimgrad)"/>
+    </svg>
+    <div class="tabs" id="tabs">
+      <div class="lens" id="lens"></div>
+      <button class="tab on">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10l9-7 9 7v10a1 1 0 01-1 1h-5v-7H9v7H4a1 1 0 01-1-1z"/></svg><span class="t">Home</span>
+      </button>
+      <button class="tab">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M6.5 6.5h11v11h-11z"/><path d="M3 9v6M21 9v6"/></svg><span class="t">Fitness</span>
+      </button>
+      <button class="tab">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 18l5-6 4 3 6-8"/></svg><span class="t">Progress</span>
+      </button>
+      <button class="tab">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="12" cy="8" r="3.4"/><path d="M5 20c0-3.3 3.1-5.5 7-5.5s7 2.2 7 5.5"/></svg><span class="t">Profile</span>
+      </button>
+    </div>
+  </nav>
+</div>
+
+<script src="apple-ui.js"></script>
+<script>
+  // theme switch, only needed if you want a manual toggle
+  document.getElementById('seg').addEventListener('click', e => {
+    const b = e.target.closest('button'); if (!b) return;
+    document.querySelectorAll('#seg button').forEach(x => x.classList.toggle('on', x === b));
+    if (b.dataset.th === 'auto') document.documentElement.removeAttribute('data-theme');
+    else document.documentElement.setAttribute('data-theme', b.dataset.th);
+  });
+
+  // what happens when a tab is picked. in a real app, go to that page.
+  document.getElementById('bar').addEventListener('tabchange', e => {
+    document.querySelector('.title').textContent = e.detail.tab.innerText.trim();
+  });
+</script>
+</body>
+</html>

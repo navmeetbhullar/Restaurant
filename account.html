@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Account · Stock</title>
+<link rel="stylesheet" href="apple-ui/apple-ui.css">
+<script src="js/theme.js"></script>
+</head>
+<body>
+
+<div class="page wait">
+  <h1 class="title">Account</h1>
+  <p class="sub" id="who"></p>
+
+  <div class="group plain" data-sq="22">
+    <div class="row"><div class="label">Name</div><div class="val" id="name"></div></div>
+    <div class="row"><div class="label">Email</div><div class="val" id="email"></div></div>
+    <div class="row"><div class="label">Role</div><div class="val" id="role"></div></div>
+  </div>
+
+  <div class="lbl">Appearance</div>
+  <div class="seg" id="seg">
+    <button data-th="light">Light</button><button data-th="dark">Dark</button><button data-th="auto">Auto</button>
+  </div>
+
+  <button class="btn frost" data-press id="out" style="margin-top:34px">Log out</button>
+  <p class="footer">Restaurant stock · Parts 1 and 2</p>
+</div>
+
+<script type="module">
+  import { start, logOut, $ } from './js/app.js';
+
+  const { user, profile } = await start({ tab: 'account' });
+  $('#name').textContent = profile.name || '—';
+  $('#email').textContent = user.email;
+  $('#role').textContent = profile.role === 'admin' ? 'Admin' : 'Checker';
+  $('#who').textContent = profile.role === 'admin'
+    ? 'You can change items, day groups and dates.'
+    : 'You can see today’s list. Only the admin can change items.';
+
+  // theme switch, saved on this phone
+  let cur = 'auto';
+  try { cur = localStorage.getItem('theme') || 'auto'; } catch (e) {}
+  const mark = t => document.querySelectorAll('#seg button').forEach(b => b.classList.toggle('on', b.dataset.th === t));
+  mark(cur);
+  $('#seg').addEventListener('click', e => {
+    const b = e.target.closest('button'); if (!b) return;
+    const t = b.dataset.th; mark(t);
+    if (t === 'auto') document.documentElement.removeAttribute('data-theme');
+    else document.documentElement.setAttribute('data-theme', t);
+    try { t === 'auto' ? localStorage.removeItem('theme') : localStorage.setItem('theme', t); } catch (e) {}
+  });
+
+  $('#out').addEventListener('click', logOut);
+</script>
+</body>
+</html>

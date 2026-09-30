@@ -1,0 +1,54 @@
+rules_version = '2';
+
+// Who can do what in the database.
+//   Admin   : read everything, change items, groups and dates.
+//   Checker : read items, groups and dates. Cannot change them.
+// Roles live in users/{uid}.role and are set by you in the Firebase console,
+// so nobody can make themselves an admin from the app.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() { return request.auth != null; }
+    function me() { return /databases/$(database)/documents/users/$(request.auth.uid); }
+    function role() { return exists(me()) ? get(me()).data.role : ''; }
+    function isStaff() { return signedIn() && role() in ['admin', 'checker']; }
+    function isAdmin() { return signedIn() && role() == 'admin'; }
+
+    match /users/{uid} {
+      allow read: if signedIn() && (request.auth.uid == uid || isAdmin());
+      allow write: if false;
+    }
+
+    match /items/{id} {
+      allow read: if isStaff();
+      allow create, update: if isAdmin()
+        && request.resource.data.name is string
+        && request.resource.data.name.size() > 0
+        && request.resource.data.name.size() <= 80
+        && request.resource.data.unit is string
+        && request.resource.data.ideal is number
+        && request.resource.data.ideal >= 0;
+      allow delete: if isAdmin();
+    }
+
+    match /groups/{id} {
+      allow read: if isStaff();
+      allow create, update: if isAdmin()
+        && request.resource.data.name is string
+        && request.resource.data.name.size() > 0
+        && request.resource.data.multiplier is number
+        && request.resource.data.multiplier > 0
+        && request.resource.data.rules is map;
+      allow delete: if isAdmin();
+    }
+
+    // One document per date, id "YYYY-MM-DD", so a date can only have one group.
+    match /dates/{day} {
+      allow read: if isStaff();
+      allow create, update: if isAdmin()
+        && day.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
+        && request.resource.data.group is string;
+      allow delete: if isAdmin();
+    }
+  }
+}

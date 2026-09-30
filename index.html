@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Log in · Stock</title>
+<link rel="stylesheet" href="apple-ui/apple-ui.css">
+<script src="js/theme.js"></script>
+</head>
+<body>
+
+<div class="page">
+  <h1 class="title" style="margin-top:56px">Stock</h1>
+  <p class="sub">Log in with the email and password you were given. The app knows if you are Admin or Checker.</p>
+
+  <form id="form" novalidate>
+    <div class="group plain" data-sq="22">
+      <div class="row"><input class="field" id="email" type="email" placeholder="Email" autocomplete="username" autocapitalize="off" required></div>
+      <div class="row"><input class="field" id="password" type="password" placeholder="Password" autocomplete="current-password" required></div>
+    </div>
+    <p class="error-text" id="err" hidden></p>
+    <p class="ok-text" id="ok" hidden></p>
+    <button class="btn" data-press type="submit" id="go">Log in</button>
+  </form>
+
+  <p class="center"><button class="link" id="forgot" type="button">Forgot password?</button></p>
+</div>
+
+<script src="apple-ui/apple-ui.js"></script>
+<script type="module">
+  import { auth, $ } from './js/app.js';
+  import { signInWithEmailAndPassword, onAuthStateChanged, sendPasswordResetEmail }
+    from 'https://www.gstatic.com/firebasejs/12.19.0/firebase-auth.js';
+
+  const show = (el, text) => { el.textContent = text; el.hidden = !text; };
+
+  if (new URLSearchParams(location.search).has('norole'))
+    show($('#err'), 'This account has no role yet. Ask the admin to set it up.');
+
+  // already logged in? skip straight to Today
+  const stop = onAuthStateChanged(auth, u => { stop(); if (u && !location.search.includes('norole')) location.replace('today.html'); });
+
+  $('#form').addEventListener('submit', async e => {
+    e.preventDefault();
+    show($('#err'), ''); show($('#ok'), '');
+    const email = $('#email').value.trim(), pw = $('#password').value;
+    if (!email || !pw) return show($('#err'), 'Enter your email and password.');
+    $('#go').disabled = true; $('#go').textContent = 'Logging in…';
+    try {
+      await signInWithEmailAndPassword(auth, email, pw);
+      location.replace('today.html');
+    } catch (err) {
+      const c = err.code || '';
+      show($('#err'),
+        c.includes('invalid-credential') || c.includes('wrong-password') || c.includes('user-not-found') ? 'Wrong email or password.' :
+        c.includes('invalid-email') ? 'That email does not look right.' :
+        c.includes('too-many-requests') ? 'Too many tries. Wait a minute and try again.' :
+        c.includes('network') ? 'No internet connection.' :
+        'Could not log in (' + c + ').');
+      $('#go').disabled = false; $('#go').textContent = 'Log in';
+    }
+  });
+
+  $('#forgot').addEventListener('click', async () => {
+    show($('#err'), ''); show($('#ok'), '');
+    const email = $('#email').value.trim();
+    if (!email) return show($('#err'), 'Type your email above first, then tap "Forgot password?".');
+    try {
+      await sendPasswordResetEmail(auth, email);
+      show($('#ok'), 'If that email has an account, a reset link is on its way.');
+    } catch (err) { show($('#err'), 'Could not send the reset email.'); }
+  });
+</script>
+</body>
+</html>

@@ -63,30 +63,31 @@ export async function uidsWithRole(role) {
 }
 
 // Sends a notification to every phone these people turned notifications on for.
+// Phones live inside each person: users/{uid}/phones/{token}.
 // Returns { sent, noPhone: [uids without any phone] }.
 export async function pushTo(uids, { title, body, url = '/today.html', tag }) {
   const { db } = fb();
-  const tokens = [];
-  for (let i = 0; i < uids.length; i += 30) {
-    const snap = await db.collection('tokens').where('uid', 'in', uids.slice(i, i + 30)).get();
-    snap.docs.forEach(d => tokens.push({ token: d.id, uid: d.data().uid }));
-  }
-  const noPhone = uids.filter(u => !tokens.some(t => t.uid === u));
-  if (!tokens.length) return { sent: 0, noPhone };
+  const phones = [];
+  await Promise.all(uids.map(async uid => {
+    const snap = await db.collection(`users/${uid}/phones`).get();
+    snap.docs.forEach(d => phones.push({ token: d.id, uid, ref: d.ref }));
+  }));
+  const noPhone = uids.filter(u => !phones.some(p => p.uid === u));
+  if (!phones.length) return { sent: 0, noPhone };
 
   const data = { title, body, url, tag: tag || url };
   if (process.env.PUSH_LOG) {                       // local testing: write instead of sending
-    appendFileSync(process.env.PUSH_LOG, JSON.stringify({ to: tokens.map(t => t.uid), ...data }) + '\n');
-    return { sent: tokens.length, noPhone };
+    appendFileSync(process.env.PUSH_LOG, JSON.stringify({ to: phones.map(p => p.uid), ...data }) + '\n');
+    return { sent: phones.length, noPhone };
   }
   const r = await getMessaging().sendEachForMulticast({
-    tokens: tokens.map(t => t.token),
+    tokens: phones.map(p => p.token),
     data,
     webpush: { headers: { Urgency: 'high', TTL: '86400' } },
   });
   // forget phones that uninstalled or turned notifications off
-  const dead = r.responses.map((x, i) => !x.success && /not-registered|invalid-registration|invalid-argument/.test(x.error?.code || '') ? tokens[i].token : null).filter(Boolean);
-  await Promise.all(dead.map(t => db.doc('tokens/' + t).delete()));
+  await Promise.all(r.responses.map((x, i) =>
+    !x.success && /not-registered|invalid-registration|invalid-argument/.test(x.error?.code || '') ? phones[i].ref.delete() : null));
   return { sent: r.successCount, noPhone };
 }
 

@@ -1,15 +1,21 @@
-// Shared code for every page: Firebase, login check, tab bar, helpers.
+// Shared code for every page: Firebase, login check, data loading, helpers.
+// The tab bar is drawn earlier by shell.js, from the role remembered on this phone.
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/12.19.0/firebase-app.js';
 import { getAuth, initializeAuth, inMemoryPersistence, onAuthStateChanged, signOut, connectAuthEmulator,
   createUserWithEmailAndPassword, signInWithEmailAndPassword }
   from 'https://www.gstatic.com/firebasejs/12.19.0/firebase-auth.js';
-import { getFirestore, doc, getDoc, getDocs, collection, query, where, documentId, connectFirestoreEmulator }
+import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, connectFirestoreEmulator,
+  doc, getDoc, getDocs, getDocsFromCache, collection }
   from 'https://www.gstatic.com/firebasejs/12.19.0/firebase-firestore.js';
 import { firebaseConfig } from './firebase-config.js';
 
 export const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
-export const db = getFirestore(app);
+// Keep a copy of the data on the phone, so screens can show it instantly
+// and then update from the internet.
+export const db = initializeFirestore(app, {
+  localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }),
+});
 
 // Local testing only: talk to the Firebase emulator instead of the real project.
 const EMULATOR = location.hostname === 'localhost' && location.port === '5055';
@@ -42,11 +48,8 @@ export async function createLogin(email, password) {
 
 /* ---------- stock maths (shared with the server) ---------- */
 export * from './stock.js';
-import { fromIso, extraDaysOf, fmtNum } from './stock.js';
-export const fmtExtra = g => {
-  const d = extraDaysOf(g);
-  return d === 0 ? 'Normal' : `+${fmtNum(d)} day${d === 1 ? '' : 's'}`;
-};
+import { fromIso, fmtNum, autoSatTue } from './stock.js';
+export const fmtMult = m => fmtNum(m) + 'x';
 
 /* ---------- dates (always the phone's local day) ---------- */
 export function niceDate(s, opts = { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' }) {
@@ -59,19 +62,48 @@ const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct
 export const shortDate = s => { const d = fromIso(s); return `${DAY[d.getDay()]} ${d.getDate()} ${MON[d.getMonth()]}`; };
 export const blockLabel = b => `${shortDate(b.start)} – ${shortDate(b.end)}`;
 
-/* ---------- loading stock data ----------
-   Everything needed to work out a block's amounts, in one go. */
-export async function loadStock(block) {
-  const [is, gs, ds] = await Promise.all([
-    getDocs(collection(db, 'items')),
-    getDocs(collection(db, 'groups')),
-    block ? getDocs(query(collection(db, 'dates'),
-      where(documentId(), '>=', block.start), where(documentId(), '<=', block.end))) : null,
-  ]);
+/* ---------- loading data fast ----------
+   fresh(load, render): shows the copy saved on this phone straight away,
+   then the latest copy from the internet a moment later. load(true) must
+   return null when the phone has nothing saved yet. */
+export async function fresh(load, render) {
+  let shown = false;
+  try { const d = await load(true); if (d != null) { render(d, true); shown = true; } } catch (e) {}
+  try { render(await load(false), false); }
+  catch (e) { console.warn(e); if (!shown) throw e; }
+}
+
+// Items and groups, needed to work out any block's amounts.
+export async function loadStock(fromCache = false) {
+  const get = fromCache ? getDocsFromCache : getDocs;
+  const [is, gs] = await Promise.all([get(collection(db, 'items')), get(collection(db, 'groups'))]);
+  if (fromCache && is.empty) return null;
   const items = is.docs.map(d => ({ id: d.id, ...d.data() })).sort(byName);
-  const groups = Object.fromEntries(gs.docs.map(d => [d.id, { id: d.id, rules: {}, ...d.data() }]));
-  const dateGroups = ds ? Object.fromEntries(ds.docs.map(d => [d.id, d.data().group])) : {};
-  return { items, groups, dateGroups };
+  const groups = Object.fromEntries(gs.docs.map(d => [d.id, { id: d.id, multiply: 1, dates: [], custom: {}, ...d.data() }]));
+  return { items, groups };
+}
+
+/* ---------- Wed–Fri -> Sat–Tue auto-fill ----------
+   Typing the Wed–Fri (3-day) amount fills Sat–Tue (4-day) with one more day:
+   wedFri / 3 * 4. Once the admin types their own Sat–Tue it is left alone,
+   and the "Use +1 day" link puts the suggestion back. */
+export function autoPair(aEl, bEl, hintEl, unit) {
+  const suggest = () => autoSatTue(aEl.value, unit());
+  const mark = () => {
+    const isAuto = bEl.dataset.auto === '1';
+    if (!hintEl) return;
+    hintEl.innerHTML = aEl.value === '' ? 'Type Wed–Fri first. Sat–Tue fills in with one more day.'
+      : isAuto ? `Sat–Tue filled in as Wed–Fri + 1 day (${fmtNum(aEl.value)} ÷ 3 × 4). Change it if needed.`
+      : `Sat–Tue changed by hand. <button type="button" class="link">Use +1 day (${fmtNum(suggest())})</button>`;
+    hintEl.querySelector('button')?.addEventListener('click', () => { bEl.dataset.auto = '1'; fill(); });
+  };
+  const fill = () => { if (bEl.dataset.auto === '1' && aEl.value !== '') bEl.value = suggest(); mark(); };
+  // new or still matching the suggestion -> keep auto-filling
+  bEl.dataset.auto = bEl.value === '' || Number(bEl.value) === suggest() ? '1' : '0';
+  aEl.addEventListener('input', fill);
+  bEl.addEventListener('input', () => { bEl.dataset.auto = '0'; mark(); });
+  mark();
+  return { refill: fill };
 }
 
 /* ---------- small helpers ---------- */
@@ -83,89 +115,49 @@ export const param = k => new URLSearchParams(location.search).get(k);
 export const refreshUI = () => window.AppleUI?.refresh();
 export const CHEV = '<div class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round"><path d="M9 6l6 6-6 6"/></svg></div>';
 
-/* ---------- tab bar ---------- */
-const ICONS = {
-  today: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="5" width="17" height="15.5" rx="3"/><path d="M3.5 10h17M8 3v4M16 3v4"/></svg>',
-  items: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M9 6h11M9 12h11M9 18h11"/><circle cx="4.5" cy="6" r="1.2"/><circle cx="4.5" cy="12" r="1.2"/><circle cx="4.5" cy="18" r="1.2"/></svg>',
-  groups: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l2.4 5.3 5.6.6-4.2 3.9 1.2 5.7L12 15.7 6.9 18.5l1.2-5.7L4 8.9l5.6-.6z"/></svg>',
-  account: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="12" cy="8" r="3.4"/><path d="M5 20c0-3.3 3.1-5.5 7-5.5s7 2.2 7 5.5"/></svg>',
-};
-const TABS = {
-  admin: [['today', 'Today', 'today.html'], ['items', 'Items', 'items.html'],
-          ['groups', 'Groups', 'groups.html'], ['account', 'Account', 'account.html']],
-  checker: [['today', 'Today', 'today.html'], ['account', 'Account', 'account.html']],
-};
+/* ---------- login ----------
+   The role is remembered on this phone ("me") so pages open instantly.
+   start() uses it at once, and checks with Firebase in the background:
+   logged out, role changed or removed -> the page reloads or goes to login.
+   Nothing is unsafe about this: the database rules check every read and write. */
+const hang = () => new Promise(() => {});
+let authResolve;
+export const authReady = new Promise(r => { authResolve = r; });
+const stopAuth = onAuthStateChanged(auth, u => { stopAuth(); authResolve(u); });
 
-function tabBar(role, current) {
-  const tabs = TABS[role];
-  const html = `
-<div class="scrim"></div>
-<div class="dock">
-  <nav class="bar" id="bar">
-    <div class="bar__glass"></div>
-    <div class="bar__sheen"></div>
-    <svg class="bar__edge" id="edge" preserveAspectRatio="none">
-      <defs><linearGradient id="rimgrad" x1="0" y1="0" x2="1" y2="1">
-        <stop offset="0"    stop-color="var(--rim-hot)"/>
-        <stop offset="0.26" stop-color="var(--rim-cool)"/>
-        <stop offset="0.49" stop-color="transparent"/>
-        <stop offset="0.73" stop-color="var(--rim-cool)"/>
-        <stop offset="1"    stop-color="var(--rim-hot)"/>
-      </linearGradient></defs>
-      <path id="edgePath" stroke="url(#rimgrad)"/>
-    </svg>
-    <div class="tabs" id="tabs">
-      <div class="lens" id="lens" style="width:${100 / tabs.length}%"></div>
-      ${tabs.map(([k, t]) => `<button class="tab${k === current ? ' on' : ''}">${ICONS[k]}<span class="t">${t}</span></button>`).join('')}
-    </div>
-  </nav>
-</div>`;
-  document.body.insertAdjacentHTML('beforeend', html);
-  document.getElementById('bar').addEventListener('tabchange', e => {
-    location.href = tabs[e.detail.index][2];
-  });
+export function remember(me) { try { localStorage.setItem('me', JSON.stringify(me)); } catch (e) {} }
+export function forget() { try { localStorage.removeItem('me'); } catch (e) {} }
+
+// Reads the person's role and remembers it. Returns null if they have no access.
+export async function loadMe(user) {
+  const snap = await getDoc(doc(db, 'users', user.uid));
+  const p = snap.exists() ? snap.data() : null;
+  if (!p || !['admin', 'checker'].includes(p.role)) return null;
+  const me = { uid: user.uid, email: user.email, name: p.name || '', role: p.role };
+  remember(me);
+  return me;
 }
 
-function loadKit() {
-  return new Promise(res => {
-    const s = document.createElement('script');
-    s.src = 'apple-ui/apple-ui.js';
-    s.onload = res;
-    document.body.appendChild(s);
+export function start({ adminOnly = false } = {}) {
+  const me = window.__me;
+  const check = authReady.then(async user => {
+    if (!user || (me && me.uid !== user.uid)) { forget(); location.replace('index.html'); return hang(); }
+    let fresh;
+    try { fresh = await loadMe(user); }
+    catch (e) { console.warn('offline, using saved login', e); return; }
+    if (!fresh) { forget(); await signOut(auth); location.replace('index.html?norole=1'); return hang(); }
+    if (!me || me.role !== fresh.role || me.name !== fresh.name) { location.reload(); return hang(); }
   });
-}
-
-/* ---------- login check ----------
-   Every page except the login page calls start(). It waits for Firebase to
-   say who is logged in, reads their role, then draws the tab bar.
-   Not logged in -> login page. Checker on an admin page -> Today. */
-export function start({ tab, adminOnly = false } = {}) {
-  return new Promise(resolve => {
-    const stop = onAuthStateChanged(auth, async user => {
-      stop();
-      if (!user) return location.replace('index.html');
-      let profile = null;
-      try {
-        const snap = await getDoc(doc(db, 'users', user.uid));
-        profile = snap.exists() ? snap.data() : null;
-      } catch (e) { console.error(e); }
-      if (!profile || !['admin', 'checker'].includes(profile.role)) {
-        await signOut(auth);
-        return location.replace('index.html?norole=1');
-      }
-      if (adminOnly && profile.role !== 'admin') return location.replace('today.html');
-      tabBar(profile.role, tab);
-      await loadKit();
-      document.querySelector('.page')?.classList.remove('wait');
-      resolve({ user, profile, isAdmin: profile.role === 'admin' });
-    });
-  });
+  if (!me) return check.then(hang);            // first visit on this phone: reloads once
+  if (adminOnly && me.role !== 'admin') { location.replace('today.html'); return hang(); }
+  document.querySelector('.page')?.classList.remove('wait');
+  return Promise.resolve({ user: { uid: me.uid, email: me.email }, profile: me, isAdmin: me.role === 'admin' });
 }
 
 /* ---------- talking to our server (Vercel functions in /api) ----------
    Sends the logged-in person's Firebase pass so the server knows who asked. */
 export async function api(path, body) {
-  const token = await auth.currentUser?.getIdToken();
+  const token = await (await authReady)?.getIdToken();
   const res = await fetch('/api/' + path, {
     method: 'POST',
     headers: { 'content-type': 'application/json', authorization: 'Bearer ' + token },
@@ -178,6 +170,7 @@ export async function api(path, body) {
 }
 
 export async function logOut() {
+  forget();
   await signOut(auth);
   location.replace('index.html');
 }

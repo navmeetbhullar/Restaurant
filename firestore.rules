@@ -1,10 +1,17 @@
 rules_version = '2';
 
 // Who can do what in the database.
-//   Admin   : read everything, change items, groups and dates.
-//   Checker : read items, groups and dates. Cannot change them.
-// Roles live in users/{uid}.role and are set by you in the Firebase console,
-// so nobody can make themselves an admin from the app.
+//   Admin   : read everything, change items, groups, checkers and invoices.
+//   Checker : read items and groups, fill in the stock check until it is submitted.
+// Roles live in users/{uid}.role. Admins are only made in the Firebase console.
+//
+// Collections:
+//   users/{uid}            name, email, role
+//   users/{uid}/phones/{x} phones that turned notifications on
+//   items/{onions}         name, unit, wedFri, satTue, onlyFor (group id, optional)
+//   groups/{diwali}        name, multiply, dates [..], custom { itemId: {...} }
+//   checks/{2026-10-07}    one stock check per block (named by its first day)
+//   invoices/{2026-10-07}  the invoice photo for that check
 service cloud.firestore {
   match /databases/{database}/documents {
 
@@ -13,11 +20,11 @@ service cloud.firestore {
     function role() { return exists(me()) ? get(me()).data.role : ''; }
     function isStaff() { return signedIn() && role() in ['admin', 'checker']; }
     function isAdmin() { return signedIn() && role() == 'admin'; }
+    function isDay(s) { return s.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$'); }
 
-    // The admin can add and remove checkers from the app, but can never make
-    // anyone an admin. Admins are only made in the Firebase console.
     match /users/{uid} {
       allow read: if signedIn() && (request.auth.uid == uid || isAdmin());
+      // the admin can add and remove checkers, never make another admin
       allow create: if isAdmin()
         && request.resource.data.keys().hasOnly(['name', 'role', 'email'])
         && request.resource.data.role == 'checker'
@@ -26,6 +33,10 @@ service cloud.firestore {
         && request.resource.data.name.size() <= 60;
       allow delete: if isAdmin() && resource.data.role == 'checker';
       allow update: if false;
+
+      match /phones/{phone} {
+        allow read, write: if signedIn() && request.auth.uid == uid;
+      }
     }
 
     match /items/{id} {
@@ -35,8 +46,8 @@ service cloud.firestore {
         && request.resource.data.name.size() > 0
         && request.resource.data.name.size() <= 80
         && request.resource.data.unit is string
-        && request.resource.data.a is number && request.resource.data.a >= 0
-        && request.resource.data.b is number && request.resource.data.b >= 0;
+        && request.resource.data.wedFri is number && request.resource.data.wedFri >= 0
+        && request.resource.data.satTue is number && request.resource.data.satTue >= 0;
       allow delete: if isAdmin();
     }
 
@@ -45,49 +56,37 @@ service cloud.firestore {
       allow create, update: if isAdmin()
         && request.resource.data.name is string
         && request.resource.data.name.size() > 0
-        && request.resource.data.extraDays is number
-        && request.resource.data.extraDays >= 0
-        && request.resource.data.rules is map;
+        && request.resource.data.multiply is number
+        && request.resource.data.multiply > 0
+        && request.resource.data.dates is list
+        && request.resource.data.custom is map;
       allow delete: if isAdmin();
     }
 
-    // One document per date, id "YYYY-MM-DD", so a date can only have one group.
-    match /dates/{day} {
-      allow read: if isStaff();
-      allow create, update: if isAdmin()
-        && day.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
-        && request.resource.data.group is string;
-      allow delete: if isAdmin();
-    }
-  
-    // One stock check per block, named by the block's first day.
-    // Checkers fill it in while it is a draft. Once submitted, only the
-    // admin can change it (report seen, invoice). The server adds reminder
-    // flags with its own key, which skips these rules.
+    // Checkers fill this in while counting. Once submitted only the admin can
+    // change it (report seen, invoice). The server adds reminder notes with its
+    // own key, which skips these rules.
     match /checks/{block} {
       allow read: if isStaff();
-      allow create: if isStaff()
-        && block.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
-        && request.resource.data.status in ['draft', 'submitted']
-        && request.resource.data.counts is map;
+      allow create: if isStaff() && isDay(block)
+        && request.resource.data.status in ['counting', 'submitted']
+        && request.resource.data.items is map;
       allow update: if isAdmin() || (isStaff()
-        && resource.data.status == 'draft'
-        && request.resource.data.status in ['draft', 'submitted']
+        && resource.data.get('status', 'counting') != 'submitted'
+        && request.resource.data.status in ['counting', 'submitted']
         && request.resource.data.diff(resource.data).affectedKeys()
-             .hasOnly(['counts', 'status', 'lines', 'by', 'byName', 'submittedAt', 'updatedAt', 'type', 'days', 'start']));
+             .hasOnly(['items', 'status', 'start', 'block', 'days', 'checkedBy', 'checkedByUid', 'submittedAt', 'updatedAt']));
       allow delete: if isAdmin();
     }
 
-    // Invoice photo and what was read from it. Admin only.
     match /invoices/{block} {
       allow read, write: if isAdmin();
     }
 
-    // Phones that asked for notifications. Each person manages only their own.
-    match /tokens/{token} {
-      allow read: if signedIn() && (resource == null || resource.data.uid == request.auth.uid);
-      allow create, update: if signedIn() && request.resource.data.uid == request.auth.uid;
-      allow delete: if signedIn() && resource.data.uid == request.auth.uid;
-    }
+    // Old layout from the first version. Only here so the admin's
+    // "Clean up old data" button can delete it. Safe to remove later.
+    match /dates/{x}     { allow read, delete: if isAdmin(); }
+    match /reminders/{x} { allow read, delete: if isAdmin(); }
+    match /tokens/{x}    { allow read, delete: if isAdmin(); }
   }
 }

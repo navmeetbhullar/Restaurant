@@ -61,43 +61,63 @@ export const nextBlock = b => blockOf(addDays(b.end, 1));
 export const prevBlock = b => blockOf(addDays(b.start, -1));
 
 /* ---------- amounts ----------
-   Each item has a normal amount for each block: a (Wed–Fri) and b (Sat–Tue).
-   One day's worth = block amount / days in the block.
-   A festival day adds extra on top. By default every item gets the group's
-   extra days (e.g. +1 day). An item can have its own rule:
-     { mode: 'days', value: 2 }  -> +2 days of that item
-     { mode: 'amt',  value: 5 }  -> +5 (in the item's unit)
-   Items made "just for a group" (item.only = groupId) only appear in blocks
-   that include that group's days, and only use their 'amt' rule. */
-export const blockAmount = (item, type) =>
-  Number(type === 'A' ? (item.a ?? item.ideal) : (item.b ?? item.ideal)) || 0;
-export const extraDaysOf = g =>
-  g.extraDays ?? (g.multiplier != null ? Math.max(0, g.multiplier - 1) : 1);
+   Items:  { name, unit, wedFri, satTue, onlyFor? }
+     wedFri = how much for the 3-day Wed–Fri block,
+     satTue = how much for the 4-day Sat–Tue block (filled in as wedFri plus one
+              more day, wedFri / 3 * 4, and the admin can change it).
+     onlyFor = a group id, for items only needed during that festival.
+   Groups: { name, multiply, dates: ["2026-11-08", ...], custom: { itemId: ... } }
+     multiply applies to every item on the group's days, unless custom says:
+       { multiply: 1.5 }               this item's own multiplier
+       { wedFri: 10, satTue: 13.33 }   an exact amount for a block of festival days
+   A block is worked out day by day. Each day gets its share of the block
+   amount (amount / days). Festival days get their group's share instead.
+   So Diwali (2x) on only the Friday of Wed–Fri gives 1 + 1 + 2 = 4 shares
+   of 3, i.e. 1⅓ times the normal amount. */
+export const amountFor = (x, type) => Number(type === 'A' ? x.wedFri : x.satTue) || 0;
+export const autoSatTue = (wedFri, unit) => tidy((Number(wedFri) || 0) / 3 * 4, unit);
 
-export function festivalExtra(item, group, perDay) {
-  const r = group.rules?.[item.id];
-  if (r?.mode === 'amt') return Number(r.value) || 0;
-  if (item.only) return 0;
-  const d = r?.mode === 'days' ? Number(r.value) || 0 : extraDaysOf(group);
-  return d * perDay;
+// { "2026-11-08": group, ... } from the dates stored inside each group
+export function dayGroups(groups) {
+  const out = {};
+  for (const g of Object.values(groups)) for (const d of g.dates || []) out[d] = g;
+  return out;
 }
 
-// items: [{id, name, unit, a, b, only?}]  groups: {id: group}  dateGroups: {iso: groupId}
-// Returns the items needed in this block, each with .target.
-export function blockTargets(items, groups, dateGroups, block) {
-  const fest = block.days.map(d => groups[dateGroups[d]]).filter(Boolean);
+// One day's share of an item, on a day using group g (or a normal day).
+function share(item, g, type, n) {
+  if (item.onlyFor) return g?.id === item.onlyFor ? amountFor(item, type) / n : 0;
+  const base = amountFor(item, type) / n;
+  if (!g) return base;
+  const c = g.custom?.[item.id];
+  if (c?.multiply != null) return base * (Number(c.multiply) || 0);
+  if (c?.wedFri != null || c?.satTue != null) return amountFor(c, type) / n;
+  return base * (Number(g.multiply) || 1);
+}
+
+// items: [{id, ...}]  groups: {id: group}. Returns items needed in the block, each with .need
+export function blockTargets(items, groups, block) {
+  const byDay = dayGroups(groups);
+  const n = block.days.length;
   return items
-    .filter(i => !i.only || fest.some(g => g.id === i.only))
-    .map(i => {
-      const base = i.only ? 0 : blockAmount(i, block.type);
-      const perDay = base / block.days.length;
-      let t = base;
-      for (const g of fest) if (!i.only || g.id === i.only) t += festivalExtra(i, g, perDay);
-      return { ...i, target: tidy(t, i.unit) };
-    });
+    .filter(i => !i.onlyFor || block.days.some(d => byDay[d]?.id === i.onlyFor))
+    .map(i => ({ ...i, need: tidy(block.days.reduce((t, d) => t + share(i, byDay[d], block.type, n), 0), i.unit) }));
 }
 
-// Festival days in a block, e.g. [{ day, group }]
-export function blockFestivals(groups, dateGroups, block) {
-  return block.days.filter(d => groups[dateGroups[d]]).map(d => ({ day: d, group: groups[dateGroups[d]] }));
+// Festival days in a block: [{ day, group }]
+export function blockFestivals(groups, block) {
+  const byDay = dayGroups(groups);
+  return block.days.filter(d => byDay[d]).map(d => ({ day: d, group: byDay[d] }));
+}
+
+// Readable document names, e.g. "Basmati rice" -> "basmati-rice"
+export function slugify(name) {
+  return String(name).toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'item';
+}
+export function uniqueId(name, taken) {
+  const base = slugify(name);
+  let id = base, i = 2;
+  while (taken.has(id)) id = `${base}-${i++}`;
+  return id;
 }

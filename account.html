@@ -6,6 +6,7 @@
 <title>Account · Stock</title>
 <link rel="stylesheet" href="apple-ui/apple-ui.css">
 <link rel="manifest" href="manifest.json">
+<link rel="icon" href="icons/icon-192.png">
 <link rel="apple-touch-icon" href="icons/icon-180.png">
 <meta name="apple-mobile-web-app-title" content="Stock">
 <script src="js/theme.js"></script>
@@ -54,6 +55,15 @@
     <button class="btn" data-press type="submit" id="pwGo">Change password</button>
   </form>
 
+  <div id="oldBox" hidden>
+    <div class="lbl">Old data</div>
+    <div class="group plain" data-sq="22">
+      <div class="row"><div class="label">From the first version<small id="oldNote"></small></div></div>
+    </div>
+    <p class="ok-text" id="oldOk" hidden></p>
+    <button class="btn" data-press id="oldGo">Clean up old data</button>
+  </div>
+
   <div id="sampleBox" hidden>
     <div class="lbl">Sample data (for testing)</div>
     <div class="group plain" data-sq="22">
@@ -69,8 +79,10 @@
   <p class="footer">Restaurant stock · Parts 1 and 2</p>
 </div>
 
+<script src="js/shell.js" data-tab="account"></script>
+<script src="apple-ui/apple-ui.js"></script>
 <script type="module">
-  import { start, logOut, auth, db, $ } from './js/app.js';
+  import { start, logOut, auth, authReady, db, $ } from './js/app.js';
   import { EmailAuthProvider, reauthenticateWithCredential, updatePassword }
     from 'https://www.gstatic.com/firebasejs/12.19.0/firebase-auth.js';
   import { collection, getDocs, query, where }
@@ -111,8 +123,9 @@
     if (pw === old) return say('#pwErr', 'The new password is the same as the current one.');
     $('#pwGo').disabled = true; $('#pwGo').textContent = 'Changing…';
     try {
-      await reauthenticateWithCredential(user, EmailAuthProvider.credential(user.email, old));
-      await updatePassword(user, pw);
+      const u = await authReady;          // the real login, not the remembered copy
+      await reauthenticateWithCredential(u, EmailAuthProvider.credential(u.email, old));
+      await updatePassword(u, pw);
       $('#pwForm').reset(); $('#pwUser').value = user.email;
       say('#pwOk', 'Password changed. Use the new one next time you log in.');
     } catch (ex) {
@@ -132,6 +145,22 @@
     $('#adminBox').hidden = false;
     getDocs(query(collection(db, 'users'), where('role', '==', 'checker')))
       .then(s => $('#ncheck').textContent = s.size).catch(() => {});
+
+    // leftovers from the first database layout
+    import('./js/cleanup.js').then(async cl => {
+      const old = await cl.findOld();
+      if (!old.length) return;
+      $('#oldBox').hidden = false;
+      $('#oldNote').textContent = `${old.length} entr${old.length === 1 ? 'y' : 'ies'} saved the old way. They are not used any more.`;
+      window.AppleUI?.refresh();
+      $('#oldGo').addEventListener('click', async () => {
+        if (!confirm('Delete all data from the first version? Your new items, groups, checks and people are not touched.')) return;
+        $('#oldGo').disabled = true;
+        const n = await cl.cleanOld();
+        $('#oldOk').textContent = `Done. Removed ${n} old entr${n === 1 ? 'y' : 'ies'}.`; $('#oldOk').hidden = false;
+        $('#oldGo').hidden = true;
+      });
+    }).catch(e => console.warn(e));
 
     const sample = await import('./js/sample.js');
     $('#sampleBox').hidden = false;

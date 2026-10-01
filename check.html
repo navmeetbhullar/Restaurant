@@ -6,6 +6,7 @@
 <title>Report · Stock</title>
 <link rel="stylesheet" href="apple-ui/apple-ui.css">
 <link rel="manifest" href="manifest.json">
+<link rel="icon" href="icons/icon-192.png">
 <link rel="apple-touch-icon" href="icons/icon-180.png">
 <meta name="apple-mobile-web-app-title" content="Stock">
 <script src="js/theme.js"></script>
@@ -34,6 +35,8 @@
   </div>
 </div>
 
+<script src="js/shell.js" data-tab="today"></script>
+<script src="apple-ui/apple-ui.js"></script>
 <script type="module">
   import { start, db, $, esc, fmtNum, toOrder, blockOf, blockLabel, BLOCK_NAME, param, niceDate, refreshUI } from './js/app.js';
   import { blockData, festNote } from './js/check.js';
@@ -52,6 +55,7 @@
   const amt = (n, unit) => `${fmtNum(n)}<span class="unit">${esc(unit)}</span>`;
   const label = `${BLOCK_NAME[block.type]} block · ${blockLabel(block)}`;
   let pdfSpec = null;
+  let seen = Promise.resolve();   // saving "report seen" before leaving the page
 
   // views the admin can switch between for this block
   const views = done
@@ -76,64 +80,66 @@
     document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.v === v));
     $('#dl').hidden = true; pdfSpec = null; stats(null);
     const note = fest.length ? ` · ${festNote(fest)}` : '';
-    const by = done ? `Checked by ${check.byName || '?'}` : 'Not submitted yet';
+    const by = done ? `Checked by ${check.checkedBy || '?'}` : 'Not submitted yet';
 
     if (v === 'list') {
       $('#title').textContent = 'Block list';
       $('#sub').textContent = `${label}${note}. How much should be in the store for these days.`;
       $('#body').innerHTML = `<div class="lbl">${lines.length} items</div><div class="group plain" data-sq="22">${
-        lines.map(l => `<div class="row"><div class="label">${esc(l.name)}</div><div class="amt">${amt(l.target, l.unit)}</div></div>`).join('')
+        lines.map(l => `<div class="row"><div class="label">${esc(l.name)}</div><div class="amt">${amt(l.need, l.unit)}</div></div>`).join('')
         || '<div class="empty">No items yet.</div>'}</div>`;
     }
 
     if (v === 'inputs') {
       $('#title').textContent = 'Inputs';
       $('#sub').textContent = `${label}. ${by}.`;
-      const counted = lines.filter(l => l.have != null);
+      const counted = lines.filter(l => l.counted != null);
       $('#body').innerHTML = `<div class="lbl">Counted in the store</div><div class="group plain" data-sq="22">${
-        lines.map(l => `<div class="row"><div class="label">${esc(l.name)}${isAdmin ? `<small>Needs ${fmtNum(l.target)} ${esc(l.unit)}</small>` : ''}</div>
-          ${l.have != null ? `<div class="amt">${amt(l.have, l.unit)}</div>` : '<div class="todo">Not counted</div>'}</div>`).join('')
+        lines.map(l => `<div class="row"><div class="label">${esc(l.name)}${isAdmin ? `<small>Needs ${fmtNum(l.need)} ${esc(l.unit)}</small>` : ''}</div>
+          ${l.counted != null ? `<div class="amt">${amt(l.counted, l.unit)}</div>` : '<div class="todo">Not counted</div>'}</div>`).join('')
         || '<div class="empty">Nothing counted yet.</div>'}</div>`;
       pdfSpec = { name: 'Stock count', sections: [{ heading: 'Counted in the store',
         cols: ['Item', 'Counted', 'Needs'], right: [1, 2],
-        rows: counted.map(l => [l.name, `${fmtNum(l.have)} ${l.unit}`, `${fmtNum(l.target)} ${l.unit}`]) }] };
+        rows: counted.map(l => [l.name, `${fmtNum(l.counted)} ${l.unit}`, `${fmtNum(l.need)} ${l.unit}`]) }] };
     }
 
     if (v === 'report') {
       $('#title').textContent = 'Order report';
       $('#sub').textContent = `${label}${note}. ${by}.`;
-      const buy = lines.filter(l => l.order > 0), ok = lines.filter(l => !(l.order > 0));
+      const buy = lines.filter(l => l.buy > 0), ok = lines.filter(l => !(l.buy > 0));
       stats([[buy.length, 'To buy'], [ok.length, 'Enough'], [lines.length, 'Items']]);
       $('#body').innerHTML = `
         <div class="lbl">To buy</div><div class="group plain" data-sq="22">${buy.map(l => `
-          <div class="row"><div class="label">${esc(l.name)}<small>Have ${fmtNum(l.have)} · need ${fmtNum(l.target)} ${esc(l.unit)}</small></div>
-          <div class="amt">${amt(l.order, l.unit)}</div></div>`).join('') || '<div class="empty">Nothing to buy. Everything is stocked.</div>'}</div>
+          <div class="row"><div class="label">${esc(l.name)}<small>Have ${fmtNum(l.counted)} · need ${fmtNum(l.need)} ${esc(l.unit)}</small></div>
+          <div class="amt">${amt(l.buy, l.unit)}</div></div>`).join('') || '<div class="empty">Nothing to buy. Everything is stocked.</div>'}</div>
         <div class="lbl">Enough in the store</div><div class="group plain" data-sq="22">${ok.map(l => `
-          <div class="row"><div class="label">${esc(l.name)}<small>Have ${fmtNum(l.have)} · need ${fmtNum(l.target)} ${esc(l.unit)}</small></div>
+          <div class="row"><div class="label">${esc(l.name)}<small>Have ${fmtNum(l.counted)} · need ${fmtNum(l.need)} ${esc(l.unit)}</small></div>
           <div class="val">OK</div></div>`).join('') || '<div class="empty">None.</div>'}</div>`;
       pdfSpec = { name: 'Order', sections: [
         { heading: 'To buy', cols: ['Item', 'Buy', 'Have', 'Need'], right: [1, 2, 3],
-          rows: buy.map(l => [l.name, `${fmtNum(l.order)} ${l.unit}`, fmtNum(l.have), fmtNum(l.target)]) },
+          rows: buy.map(l => [l.name, `${fmtNum(l.buy)} ${l.unit}`, fmtNum(l.counted), fmtNum(l.need)]) },
         { heading: 'Enough in the store', cols: ['Item', 'Have', 'Need'], right: [1, 2],
-          rows: ok.map(l => [l.name, `${fmtNum(l.have)} ${l.unit}`, `${fmtNum(l.target)} ${l.unit}`]) }] };
+          rows: ok.map(l => [l.name, `${fmtNum(l.counted)} ${l.unit}`, `${fmtNum(l.need)} ${l.unit}`]) }] };
       // the admin has now seen the report, so the invoice step unlocks
-      if (isAdmin && done && !check.reportSeenAt)
-        updateDoc(doc(db, 'checks', block.start), { reportSeenAt: serverTimestamp() }).then(() => check.reportSeenAt = true).catch(console.error);
+      if (isAdmin && done && !check.reportSeenAt) {
+        check.reportSeenAt = true;
+        seen = updateDoc(doc(db, 'checks', block.start), { reportSeenAt: serverTimestamp() }).catch(console.error);
+      }
     }
 
     if (v === 'missing') {
       const inv = check.invoice;
       $('#title').textContent = 'Still missing';
       $('#sub').textContent = `${label}. What did not arrive with the order. Buy these from local shops.`;
-      const rows = lines.filter(l => l.order > 0).map(l => {
+      const rows = lines.filter(l => l.buy > 0).map(l => {
         const got = Number(inv.received?.[l.id]) || 0;
-        return { ...l, got, miss: toOrder(l.order, got, l.unit) };
+        return { ...l, got, miss: toOrder(l.buy, got, l.unit) };
       });
       const miss = rows.filter(r => r.miss > 0), fine = rows.filter(r => !(r.miss > 0));
       stats([[miss.length, 'Missing'], [fine.length, 'Arrived'], [(inv.extra || []).length, 'Extra']]);
       $('#body').innerHTML = `
         <div class="lbl">Buy from local shops</div><div class="group plain" data-sq="22">${miss.map(r => `
-          <div class="row"><div class="label">${esc(r.name)}<small>Ordered ${fmtNum(r.order)} · arrived ${fmtNum(r.got)} ${esc(r.unit)}</small></div>
+          <div class="row"><div class="label">${esc(r.name)}<small>Ordered ${fmtNum(r.buy)} · arrived ${fmtNum(r.got)} ${esc(r.unit)}</small></div>
           <div class="amt">${amt(r.miss, r.unit)}</div></div>`).join('') || '<div class="empty">Nothing missing. The whole order arrived.</div>'}</div>
         <div class="lbl">Arrived in full</div><div class="group plain" data-sq="22">${fine.map(r => `
           <div class="row"><div class="label">${esc(r.name)}</div><div class="val">${fmtNum(r.got)} ${esc(r.unit)}</div></div>`).join('') || '<div class="empty">None.</div>'}</div>
@@ -142,7 +148,7 @@
         <p class="hint"><a class="link" href="invoice.html?block=${block.start}">See or change the invoice</a></p>`;
       pdfSpec = { name: 'Still missing', sections: [
         { heading: 'Buy from local shops', cols: ['Item', 'Buy', 'Ordered', 'Arrived'], right: [1, 2, 3],
-          rows: miss.map(r => [r.name, `${fmtNum(r.miss)} ${r.unit}`, fmtNum(r.order), fmtNum(r.got)]) }] };
+          rows: miss.map(r => [r.name, `${fmtNum(r.miss)} ${r.unit}`, fmtNum(r.buy), fmtNum(r.got)]) }] };
     }
 
     $('#dl').hidden = !pdfSpec;
@@ -154,7 +160,7 @@
     const btn = share ? $('#share') : $('#download'), was = btn.textContent;
     btn.disabled = true; btn.textContent = 'Making PDF…';
     try {
-      const blob = await makePdf({ title: `${pdfSpec.name} - ${blockLabel(block)}`, sub: `${label}. ${done ? 'Checked by ' + (check.byName || '') : ''}`, sections: pdfSpec.sections });
+      const blob = await makePdf({ title: `${pdfSpec.name} - ${blockLabel(block)}`, sub: `${label}. ${done ? 'Checked by ' + (check.checkedBy || '') : ''}`, sections: pdfSpec.sections });
       const text = pdfSpec.sections[0].rows.map(r => `${r[0]}: ${r[1]}`).join('\n');
       await shareOrDownload(blob, `${pdfSpec.name} ${block.start}.pdf`, `${pdfSpec.name} ${blockLabel(block)}\n\n${text}`, share);
     } catch (e) { console.error(e); $('#err').textContent = 'Could not make the PDF. Check your internet and try again.'; $('#err').hidden = false; }
@@ -163,6 +169,11 @@
   $('#share').addEventListener('click', () => out(true));
   $('#download').addEventListener('click', () => out(false));
 
+  // don't leave before "report seen" is saved, so Upload invoice shows on Today
+  document.querySelector('.topbar a').addEventListener('click', async e => {
+    const href = e.currentTarget.href;
+    e.preventDefault(); await seen; location.href = href;
+  });
   draw();
 </script>
 </body>

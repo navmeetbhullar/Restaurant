@@ -21,8 +21,8 @@ export default handler(async (req, res) => {
   const { db } = fb();
   const check = (await db.doc('checks/' + block).get()).data();
   if (check?.status !== 'submitted') throw httpError(409, 'This stock check is not submitted');
-  const ordered = Object.entries(check.lines || {})
-    .map(([id, l]) => ({ id, name: l.name, unit: l.unit, order: toOrder(l.target, check.counts?.[id], l.unit) }))
+  const ordered = Object.entries(check.items || {})
+    .map(([id, l]) => ({ id, name: l.name, unit: l.unit, order: toOrder(l.need, l.counted, l.unit) }))
     .filter(l => l.order > 0);
   if (!ordered.length) throw httpError(409, 'Nothing was ordered for this block');
 

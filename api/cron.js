@@ -3,6 +3,7 @@
 // check is not submitted yet, every checker gets a reminder.
 import { handler, send, fb, pushTo, uidsWithRole, sydneyNow, httpError } from './_lib.js';
 import { blockOf } from '../js/stock.js';
+import { FieldValue } from 'firebase-admin/firestore';
 
 export default handler(async (req, res) => {
   // Vercel sends the CRON_SECRET with its own calls, so strangers cannot trigger this.
@@ -21,13 +22,19 @@ export default handler(async (req, res) => {
   if (block.dayIndex > 1) return send(res, 200, { skipped: 'Not the first or second day of a block' });
 
   const { db } = fb();
-  const check = (await db.doc('checks/' + block.start).get()).data();
-  if (check?.status === 'submitted') return send(res, 200, { skipped: 'Check already done' });
+  const ref = db.doc('checks/' + block.start);
 
-  const flag = db.doc('reminders/check-' + iso);
-  try { await flag.create({ at: new Date() }); } catch { return send(res, 200, { skipped: 'Already reminded today' }); }
+  // note the reminder inside the check, so it is only sent once a day
+  const check = await db.runTransaction(async t => {
+    const c = (await t.get(ref)).data();
+    if (c?.status === 'submitted') return { skip: 'Check already done' };
+    if ((c?.remindersSent || []).includes(iso)) return { skip: 'Already reminded today' };
+    t.set(ref, { remindersSent: FieldValue.arrayUnion(iso) }, { merge: true });
+    return c || {};
+  });
+  if (check.skip) return send(res, 200, { skipped: check.skip });
 
-  const counted = Object.keys(check?.counts || {}).length;
+  const counted = Object.values(check.items || {}).filter(l => l.counted != null).length;
   const r = await pushTo(await uidsWithRole('checker'), {
     title: block.dayIndex === 0 ? 'Stock check today' : 'Stock check not done yet',
     body: counted

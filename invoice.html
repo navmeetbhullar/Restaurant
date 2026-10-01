@@ -6,6 +6,7 @@
 <title>Invoice · Stock</title>
 <link rel="stylesheet" href="apple-ui/apple-ui.css">
 <link rel="manifest" href="manifest.json">
+<link rel="icon" href="icons/icon-192.png">
 <link rel="apple-touch-icon" href="icons/icon-180.png">
 <script src="js/theme.js"></script>
 </head>
@@ -30,7 +31,7 @@
     </div>
   </div>
   <input type="file" id="file" accept="image/*,application/pdf" hidden>
-  <button class="btn frost" data-press id="pick">Take photo or choose file</button>
+  <button class="btn frost" data-press id="pick" disabled>Take photo or choose file</button>
   <button class="btn" data-press id="read" disabled>Read invoice</button>
   <p class="center"><button class="link" id="manual">Type what arrived myself</button></p>
   <p class="error-text" id="err" hidden></p>
@@ -48,6 +49,8 @@
   </div>
 </div>
 
+<script src="js/shell.js" data-tab="today"></script>
+<script src="apple-ui/apple-ui.js"></script>
 <script type="module">
   import { start, db, api, $, esc, fmtNum, toOrder, blockOf, blockLabel, param, refreshUI, byName } from './js/app.js';
   import { doc, getDoc, setDoc, updateDoc, serverTimestamp } from 'https://www.gstatic.com/firebasejs/12.19.0/firebase-firestore.js';
@@ -61,8 +64,8 @@
 
   const check = (await getDoc(doc(db, 'checks', block.start))).data();
   if (check?.status !== 'submitted') { location.replace('today.html'); await new Promise(() => {}); }
-  const ordered = Object.entries(check.lines || {})
-    .map(([id, l]) => ({ id, ...l, order: toOrder(l.target, check.counts?.[id], l.unit) }))
+  const ordered = Object.entries(check.items || {})
+    .map(([id, l]) => ({ id, ...l, order: toOrder(l.need, l.counted, l.unit) }))
     .filter(l => l.order > 0).sort(byName);
 
   let file = null;           // { data (base64), mime, dataUrl, name }
@@ -71,7 +74,7 @@
   /* ---------- show what is already saved ---------- */
   if (check.invoice) {
     const inv = (await getDoc(doc(db, 'invoices', block.start))).data();
-    if (inv?.dataUrl) showPreview(inv.dataUrl, inv.mime, inv.name || 'Saved invoice');
+    if (inv?.photo) showPreview(inv.photo, inv.type, inv.fileName || 'Saved invoice');
     else $('#fileName').innerHTML = `Invoice saved<small>The file was too big to keep, but the numbers are saved.</small>`;
     extra = check.invoice.extra || [];
     showRows(check.invoice.received || {}, 'Saved. You can change the numbers and save again.');
@@ -85,6 +88,7 @@
   }
 
   /* ---------- choosing a file ---------- */
+  $('#pick').disabled = false;          // ready now
   $('#pick').addEventListener('click', () => $('#file').click());
   $('#file').addEventListener('change', async () => {
     say('#err', ''); say('#ok', '');
@@ -170,11 +174,11 @@
     try {
       // keep the file too, if it is small enough for the database (about 900 KB)
       if (file) await setDoc(doc(db, 'invoices', block.start), {
-        name: file.name, mime: file.mime, at: serverTimestamp(),
-        dataUrl: file.dataUrl.length < 900_000 ? file.dataUrl : null,
+        block: blockLabel(block), fileName: file.name, type: file.mime, at: serverTimestamp(),
+        photo: file.dataUrl.length < 900_000 ? file.dataUrl : null,
       });
       await updateDoc(doc(db, 'checks', block.start), {
-        invoice: { received, extra, auto, supplier, at: serverTimestamp() },
+        invoice: { received, extra, readBy: auto ? 'Gemini, checked by admin' : 'typed by admin', supplier, at: serverTimestamp() },
       });
       location.href = `check.html?block=${block.start}&v=missing`;
     } catch (e) {

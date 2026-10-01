@@ -6,6 +6,7 @@
 <title>Items · Stock</title>
 <link rel="stylesheet" href="apple-ui/apple-ui.css">
 <link rel="manifest" href="manifest.json">
+<link rel="icon" href="icons/icon-192.png">
 <link rel="apple-touch-icon" href="icons/icon-180.png">
 <meta name="apple-mobile-web-app-title" content="Stock">
 <script src="js/theme.js"></script>
@@ -37,32 +38,17 @@
   </div>
 </div>
 
+<script src="js/shell.js" data-tab="items"></script>
+<script src="apple-ui/apple-ui.js"></script>
 <script type="module">
-  import { start, db, $, esc, fmtNum, byName, refreshUI, CHEV } from './js/app.js';
-  import { collection, getDocs } from 'https://www.gstatic.com/firebasejs/12.19.0/firebase-firestore.js';
-  import { blockAmount } from './js/stock.js';
+  import { start, $, esc, fmtNum, refreshUI, CHEV, fresh, loadStock } from './js/app.js';
 
-  await start({ tab: 'items', adminOnly: true });
-
-  const [is, gs] = await Promise.all([getDocs(collection(db, 'items')), getDocs(collection(db, 'groups'))]);
-  const all = is.docs.map(d => ({ id: d.id, ...d.data() })).sort(byName);
-  const groupName = Object.fromEntries(gs.docs.map(d => [d.id, d.data().name]));
-  const items = all.filter(i => !i.only);
-  const only = all.filter(i => i.only);
+  await start({ adminOnly: true });
   const ICON = '<div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8l8-4 8 4-8 4z"/><path d="M4 8v8l8 4 8-4V8M12 12v8"/></svg></div>';
-  $('#onlyBox').hidden = !only.length;
-  $('#only').innerHTML = only.map(i => `
-    <a class="row" data-tap href="group.html?id=${encodeURIComponent(i.only)}" style="color:inherit;text-decoration:none">
-      ${ICON}<div class="label">${esc(i.name)}<small>${esc(groupName[i.only] || 'Deleted group')}</small></div>
-      <div class="val">${esc(i.unit)}</div>${CHEV}
-    </a>`).join('');
-  $('#count').textContent = items.length
-    ? `${items.length} item${items.length > 1 ? 's' : ''}. Tap one to change or delete it.`
-    : 'Everything the restaurant keeps in stock, with its normal amount for each block.';
-  $('#searchbox').hidden = items.length < 8;
+  let items = [];
 
-  function draw(filter = '') {
-    const f = filter.trim().toLowerCase();
+  function draw() {
+    const f = $('#search').value.trim().toLowerCase();
     const shown = items.filter(i => i.name.toLowerCase().includes(f));
     $('#list').innerHTML = !items.length
       ? '<div class="empty">No items yet. Tap + to add the first one.</div>'
@@ -71,12 +57,27 @@
         <a class="row" data-tap href="item.html?id=${encodeURIComponent(i.id)}" style="color:inherit;text-decoration:none">
           ${ICON}
           <div class="label">${esc(i.name)}</div>
-          <div class="val">${fmtNum(blockAmount(i, 'A'))} / ${fmtNum(blockAmount(i, 'B'))} ${esc(i.unit)}</div>${CHEV}
+          <div class="val">${fmtNum(i.wedFri)} / ${fmtNum(i.satTue)} ${esc(i.unit)}</div>${CHEV}
         </a>`).join('');
     refreshUI();
   }
-  $('#search').addEventListener('input', e => draw(e.target.value));
-  draw();
+  $('#search').addEventListener('input', draw);
+
+  await fresh(loadStock, ({ items: all, groups }) => {
+    items = all.filter(i => !i.onlyFor);
+    const only = all.filter(i => i.onlyFor);
+    $('#onlyBox').hidden = !only.length;
+    $('#only').innerHTML = only.map(i => `
+      <a class="row" data-tap href="group.html?id=${encodeURIComponent(i.onlyFor)}" style="color:inherit;text-decoration:none">
+        ${ICON}<div class="label">${esc(i.name)}<small>${esc(groups[i.onlyFor]?.name || 'Deleted group')}</small></div>
+        <div class="val">${esc(i.unit)}</div>${CHEV}
+      </a>`).join('');
+    $('#count').textContent = items.length
+      ? `${items.length} item${items.length > 1 ? 's' : ''}. Tap one to change or delete it.`
+      : 'Everything the restaurant keeps in stock, with its normal amount for each block.';
+    $('#searchbox').hidden = items.length < 8;
+    draw();
+  });
 </script>
 </body>
 </html>

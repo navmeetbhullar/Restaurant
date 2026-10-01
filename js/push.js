@@ -1,6 +1,6 @@
 // Notifications on this phone: asks permission, then saves this phone's
 // push address (token) so the server can send reminders.
-import { app, auth, db } from './app.js';
+import { app, authReady, db } from './app.js';
 import { vapidKey } from './firebase-config.js';
 import { getMessaging, getToken, isSupported } from 'https://www.gstatic.com/firebasejs/12.19.0/firebase-messaging.js';
 import { doc, setDoc, serverTimestamp } from 'https://www.gstatic.com/firebasejs/12.19.0/firebase-firestore.js';
@@ -12,7 +12,12 @@ async function register() {
   const reg = await navigator.serviceWorker.register('sw.js');
   const token = await getToken(getMessaging(app), { vapidKey, serviceWorkerRegistration: reg });
   if (!token) throw new Error('no token');
-  await setDoc(doc(db, 'tokens', token), { uid: auth.currentUser.uid, updated: serverTimestamp(), device: navigator.userAgent.slice(0, 120) });
+  const user = await authReady;
+  // saved inside the person: users/{uid}/phones/{token}
+  await setDoc(doc(db, 'users', user.uid, 'phones', token), {
+    device: /iPhone|iPad/.test(navigator.userAgent) ? 'iPhone' : /Android/.test(navigator.userAgent) ? 'Android' : 'Computer',
+    updated: serverTimestamp(),
+  });
   return token;
 }
 

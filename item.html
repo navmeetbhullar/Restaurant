@@ -6,6 +6,7 @@
 <title>Item · Stock</title>
 <link rel="stylesheet" href="apple-ui/apple-ui.css">
 <link rel="manifest" href="manifest.json">
+<link rel="icon" href="icons/icon-192.png">
 <link rel="apple-touch-icon" href="icons/icon-180.png">
 <meta name="apple-mobile-web-app-title" content="Stock">
 <script src="js/theme.js"></script>
@@ -20,7 +21,7 @@
   </div>
 
   <h1 class="title" id="title">New item</h1>
-  <p class="sub" id="intro">How much should be in the store at the start of each block, on normal days.</p>
+  <p class="sub">How much should be in the store at the start of each block, on normal days.</p>
 
   <form id="form" novalidate>
     <div class="group plain" data-sq="22">
@@ -29,27 +30,31 @@
       <div class="row"><div class="key">Wed–Fri<small class="unit" style="display:block;font-size:12px">3 days</small></div><input class="field right" id="a" type="number" inputmode="decimal" min="0" step="any" placeholder="0"><span class="unit ul"></span></div>
       <div class="row"><div class="key">Sat–Tue<small class="unit" style="display:block;font-size:12px">4 days</small></div><input class="field right" id="b" type="number" inputmode="decimal" min="0" step="any" placeholder="0"><span class="unit ul"></span></div>
     </div>
+    <p class="hint" id="autoHint"></p>
     <p class="error-text" id="err" hidden></p>
     <button class="btn" data-press type="submit" id="save">Save</button>
   </form>
   <button class="btn frost danger" data-press id="del" hidden>Delete item</button>
 </div>
 
+<script src="js/shell.js" data-tab="items"></script>
+<script src="apple-ui/apple-ui.js"></script>
 <script type="module">
-  import { start, db, $, param, UNITS, refreshUI } from './js/app.js';
-  import { collection, doc, getDoc, getDocs, addDoc, updateDoc, writeBatch, deleteField, serverTimestamp }
+  import { start, db, $, param, UNITS, refreshUI, autoPair, uniqueId } from './js/app.js';
+  import { collection, doc, getDoc, getDocFromCache, getDocs, setDoc, updateDoc, writeBatch, deleteField }
     from 'https://www.gstatic.com/firebasejs/12.19.0/firebase-firestore.js';
 
-  await start({ tab: 'items', adminOnly: true });
+  await start({ adminOnly: true });
   const id = param('id');
   const err = t => { $('#err').textContent = t; $('#err').hidden = !t; };
 
   let item = null;
   if (id) {
-    const s = await getDoc(doc(db, 'items', id));
+    const ref = doc(db, 'items', id);
+    const s = await getDocFromCache(ref).catch(() => getDoc(ref));
     if (!s.exists()) { location.replace('items.html'); await new Promise(() => {}); }
     item = s.data();
-    if (item.only) { location.replace('group.html?id=' + encodeURIComponent(item.only)); await new Promise(() => {}); }
+    if (item.onlyFor) { location.replace('group.html?id=' + encodeURIComponent(item.onlyFor)); await new Promise(() => {}); }
   }
 
   // units list, keeping any old unit that is not in the list any more
@@ -62,32 +67,34 @@
     $('#title').textContent = item.name;
     document.title = item.name + ' · Stock';
     $('#name').value = item.name; $('#unit').value = item.unit;
-    $('#a').value = item.a ?? item.ideal ?? ''; $('#b').value = item.b ?? item.ideal ?? '';
+    $('#a').value = item.wedFri ?? ''; $('#b').value = item.satTue ?? '';
     $('#del').hidden = false;
   } else {
     $('#name').focus();
   }
   syncUnit();
+  autoPair($('#a'), $('#b'), $('#autoHint'), () => $('#unit').value);
   refreshUI();
 
   $('#form').addEventListener('submit', async e => {
     e.preventDefault(); err('');
     const name = $('#name').value.trim().replace(/\s+/g, ' ');
     const unit = $('#unit').value;
-    const a = Number($('#a').value), b = Number($('#b').value);
     if (!name) return err('Give the item a name.');
     for (const [v, n] of [[$('#a').value, 'Wed–Fri'], [$('#b').value, 'Sat–Tue']])
       if (v === '' || !isFinite(Number(v)) || Number(v) < 0) return err(`Enter the ${n} amount as a number, like 10 or 2.5.`);
-
-    // stop two items with the same name
-    const all = (await getDocs(collection(db, 'items'))).docs;
-    if (all.some(d => d.id !== id && d.data().name.toLowerCase() === name.toLowerCase()))
-      return err(`There is already an item called "${name}".`);
+    const wedFri = Number($('#a').value), satTue = Number($('#b').value);
 
     $('#save').disabled = true; $('#save').textContent = 'Saving…';
     try {
-      if (id) await updateDoc(doc(db, 'items', id), { name, unit, a, b, ideal: deleteField() });
-      else await addDoc(collection(db, 'items'), { name, unit, a, b, created: serverTimestamp() });
+      // stop two items with the same name
+      const all = (await getDocs(collection(db, 'items'))).docs;
+      if (all.some(d => d.id !== id && d.data().name.toLowerCase() === name.toLowerCase())) {
+        $('#save').disabled = false; $('#save').textContent = 'Save';
+        return err(`There is already an item called "${name}".`);
+      }
+      if (id) await updateDoc(doc(db, 'items', id), { name, unit, wedFri, satTue });
+      else await setDoc(doc(db, 'items', uniqueId(name, new Set(all.map(d => d.id)))), { name, unit, wedFri, satTue });
       location.href = 'items.html';
     } catch (ex) {
       console.error(ex); err('Could not save. Check your internet and try again.');
@@ -102,7 +109,7 @@
       const batch = writeBatch(db);
       batch.delete(doc(db, 'items', id));
       (await getDocs(collection(db, 'groups'))).docs.forEach(g => {
-        if (g.data().rules?.[id]) batch.update(g.ref, { ['rules.' + id]: deleteField() });
+        if (g.data().custom?.[id]) batch.update(g.ref, { ['custom.' + id]: deleteField() });
       });
       await batch.commit();
       location.href = 'items.html';

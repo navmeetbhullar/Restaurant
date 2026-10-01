@@ -6,6 +6,7 @@
 <title>Log in · Stock</title>
 <link rel="stylesheet" href="apple-ui/apple-ui.css">
 <link rel="manifest" href="manifest.json">
+<link rel="icon" href="icons/icon-192.png">
 <link rel="apple-touch-icon" href="icons/icon-180.png">
 <meta name="apple-mobile-web-app-title" content="Stock">
 <script src="js/theme.js"></script>
@@ -29,9 +30,10 @@
   <p class="center"><button class="link" id="forgot" type="button">Forgot password?</button></p>
 </div>
 
+<script src="js/shell.js"></script>
 <script src="apple-ui/apple-ui.js"></script>
 <script type="module">
-  import { auth, $ } from './js/app.js';
+  import { auth, $, loadMe, forget } from './js/app.js';
   import { signInWithEmailAndPassword, onAuthStateChanged, sendPasswordResetEmail }
     from 'https://www.gstatic.com/firebasejs/12.19.0/firebase-auth.js';
 
@@ -50,7 +52,9 @@
     if (!email || !pw) return show($('#err'), 'Enter your email and password.');
     $('#go').disabled = true; $('#go').textContent = 'Logging in…';
     try {
-      await signInWithEmailAndPassword(auth, email, pw);
+      const { user } = await signInWithEmailAndPassword(auth, email, pw);
+      forget();
+      if (!(await loadMe(user))) { await auth.signOut(); location.replace('index.html?norole=1'); return; }
       location.replace('today.html');
     } catch (err) {
       const c = err.code || '';

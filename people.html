@@ -6,6 +6,7 @@
 <title>Checkers · Stock</title>
 <link rel="stylesheet" href="apple-ui/apple-ui.css">
 <link rel="manifest" href="manifest.json">
+<link rel="icon" href="icons/icon-192.png">
 <link rel="apple-touch-icon" href="icons/icon-180.png">
 <meta name="apple-mobile-web-app-title" content="Stock">
 <script src="js/theme.js"></script>
@@ -38,6 +39,8 @@
   </form>
 </div>
 
+<script src="js/shell.js" data-tab="account"></script>
+<script src="apple-ui/apple-ui.js"></script>
 <script type="module">
   import { start, db, $, esc, byName, refreshUI, createLogin } from './js/app.js';
   import { collection, doc, getDocs, setDoc, deleteDoc, query, where }

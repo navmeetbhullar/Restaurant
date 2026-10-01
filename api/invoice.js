@@ -4,7 +4,12 @@
 import { handler, who, send, fb, httpError } from './_lib.js';
 import { toOrder, fmtNum } from '../js/stock.js';
 
-const MODEL = process.env.GEMINI_MODEL || 'gemini-flash-latest';
+// Gemini models that can read photos and PDFs, tried in this order. Google's
+// free models are often "busy" (error 503) or at their limit (429), so if one
+// is busy the next is tried. GEMINI_MODEL in Vercel can put a model first.
+const MODELS = [...new Set([process.env.GEMINI_MODEL, 'gemini-flash-latest', 'gemini-2.5-flash',
+  'gemini-flash-lite-latest', 'gemini-2.5-flash-lite', 'gemini-2.0-flash'].filter(Boolean))];
+const sleep = ms => new Promise(r => setTimeout(r, ms));
 const TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif', 'application/pdf'];
 
 export default handler(async (req, res) => {
@@ -59,15 +64,31 @@ Do not invent lines that are not on the invoice.`;
     },
   };
   const base = process.env.GEMINI_URL || 'https://generativelanguage.googleapis.com/v1beta';
-  const r = await fetch(`${base}/models/${MODEL}:generateContent`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', 'x-goog-api-key': key },
-    body: JSON.stringify(body),
-  });
-  if (!r.ok) {
-    console.error('Gemini', r.status, (await r.text()).slice(0, 500));
-    throw httpError(502, r.status === 429 ? 'Gemini is busy (free limit). Try again in a minute.' : 'Gemini could not read the invoice.');
+  const started = Date.now();
+  let r = null, lastStatus = 0;
+  // try each model; a busy model gets one more try after a short wait
+  outer: for (const model of MODELS) {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      if (Date.now() - started > 45000) break outer;          // stay inside Vercel's 60 s limit
+      try {
+        r = await fetch(`${base}/models/${model}:generateContent`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', 'x-goog-api-key': key },
+          body: JSON.stringify(body),
+          signal: AbortSignal.timeout(30000),
+        });
+      } catch (e) { console.error('Gemini', model, 'no answer', e.name); r = null; lastStatus = 0; continue; }
+      if (r.ok) { console.log('Gemini read the invoice with', model); break outer; }
+      lastStatus = r.status;
+      console.error('Gemini', model, r.status, (await r.text()).slice(0, 300));
+      r = null;
+      if (lastStatus === 503 && attempt === 0) { await sleep(1500); continue; }   // busy: wait, try once more
+      break;                                // 429 limit, 404 unknown model, other: next model
+    }
   }
+  if (!r) throw httpError(502, lastStatus === 503 || lastStatus === 429
+    ? 'Gemini is very busy right now. Wait a minute and tap "Read invoice" again, or type what arrived.'
+    : 'Gemini could not read the invoice.');
   const out = await r.json();
   let parsed;
   try { parsed = JSON.parse(out.candidates?.[0]?.content?.parts?.map(p => p.text || '').join('') || ''); }

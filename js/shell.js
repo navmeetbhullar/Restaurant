@@ -32,5 +32,26 @@
     '<div class="tabs" id="tabs"><div class="lens" id="lens" style="width:' + (100 / TABS.length) + '%"></div>' +
     TABS.map(function (t) { return '<button class="tab' + (t[0] === tab ? ' on' : '') + '">' + ICONS[t[0]] + '<span class="t">' + t[1] + '</span></button>'; }).join('') +
     '</div></nav></div>');
-  document.getElementById('bar').addEventListener('tabchange', function (e) { location.href = TABS[e.detail.index][2]; });
+  // Go to the tab's page. The kit only reports a *different* tab, so on a
+  // sub-page (e.g. a group) tapping the lit tab would do nothing; checking
+  // after every tap means it takes you back to that section's main page.
+  var here = location.pathname.split('/').pop() || 'index.html', leaving = false;
+  function go(i) {
+    var target = TABS[i] && TABS[i][2];
+    if (!target || leaving || target === here) return;
+    leaving = true;
+    location.href = target;
+  }
+  document.getElementById('bar').addEventListener('tabchange', function (e) { go(e.detail.index); });
+  var tabsEl = document.getElementById('tabs');
+  ['pointerup', 'pointercancel'].forEach(function (ev) {
+    tabsEl.addEventListener(ev, function () {
+      setTimeout(function () {                      // after the kit has picked the tab
+        var all = tabsEl.querySelectorAll('.tab');
+        for (var i = 0; i < all.length; i++) if (all[i].classList.contains('on')) return go(i);
+      }, 0);
+    });
+  });
+  // coming back with the browser's back button: allow leaving again
+  addEventListener('pageshow', function () { leaving = false; });
 })();

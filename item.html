@@ -41,7 +41,7 @@
 <script src="apple-ui/apple-ui.js"></script>
 <script type="module">
   import { start, db, $, param, UNITS, refreshUI, autoPair, uniqueId } from './js/app.js';
-  import { collection, doc, getDoc, getDocFromCache, getDocs, setDoc, updateDoc, writeBatch, deleteField }
+  import { collection, doc, getDoc, getDocs, setDoc, updateDoc, writeBatch, deleteField }
     from 'https://www.gstatic.com/firebasejs/12.19.0/firebase-firestore.js';
 
   await start({ adminOnly: true });
@@ -51,7 +51,7 @@
   let item = null;
   if (id) {
     const ref = doc(db, 'items', id);
-    const s = await getDocFromCache(ref).catch(() => getDoc(ref));
+    const s = await getDoc(ref);
     if (!s.exists()) { location.replace('items.html'); await new Promise(() => {}); }
     item = s.data();
     if (item.onlyFor) { location.replace('group.html?id=' + encodeURIComponent(item.onlyFor)); await new Promise(() => {}); }

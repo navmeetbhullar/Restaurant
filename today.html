@@ -75,17 +75,19 @@
 <script src="apple-ui/apple-ui.js"></script>
 <script type="module">
   import { start, db, api, $, esc, fmtNum, isoDate, niceDate, shortDate, blockOf, nextBlock, blockLabel, BLOCK_NAME,
-           refreshUI, byName, CHEV, fresh } from './js/app.js';
+           refreshUI, byName, CHEV, fresh, saved } from './js/app.js';
   import { blockData, festNote } from './js/check.js';
   import { countSheet } from './js/wheel.js';
-  import { doc, setDoc, collection, getDocs, getDocsFromCache, query, where, orderBy, limit, serverTimestamp }
+  import { doc, setDoc, collection, getDocs, query, where, orderBy, limit, serverTimestamp }
     from 'https://www.gstatic.com/firebasejs/12.19.0/firebase-firestore.js';
 
   const { user, profile, isAdmin } = await start();
   const today = isoDate();
   const block = blockOf(today);
   const say = (el, t) => { $(el).textContent = t; $(el).hidden = !t; };
-  const time = ts => ts?.toDate ? ts.toDate().toLocaleString('en-AU', { weekday: 'short', hour: 'numeric', minute: '2-digit' }) : '';
+  // times come from the database, or from the saved copy as { seconds }
+  const time = ts => { const d = ts?.toDate ? ts.toDate() : ts?.seconds ? new Date(ts.seconds * 1000) : null;
+    return d ? d.toLocaleString('en-AU', { weekday: 'short', hour: 'numeric', minute: '2-digit' }) : ''; };
   const TICK = '<div class="tick"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></div>';
 
   $('#date').textContent = niceDate(today, { weekday: 'long', day: 'numeric', month: 'long' });
@@ -251,8 +253,13 @@
     const usersQ = query(collection(db, 'users'), where('role', '==', 'checker'));
     const pastQ = query(collection(db, 'checks'), where('start', '<', block.start), orderBy('start', 'desc'), limit(8));
     const list = snap => snap.docs.map(d => ({ id: d.id, ...d.data() }));
-    jobs.push(fresh(async c => { const s = await (c ? getDocsFromCache : getDocs)(usersQ); return c && s.empty ? null : list(s).sort(byName); }, drawPeople));
-    jobs.push(fresh(async c => { const s = await (c ? getDocsFromCache : getDocs)(pastQ); return c && s.empty ? null : list(s); }, drawPast));
+    const cached = (key, q, sort) => async c => {
+      if (c) return saved.get(key);
+      const rows = list(await getDocs(q)); if (sort) rows.sort(byName);
+      saved.set(key, rows); return rows;
+    };
+    jobs.push(fresh(cached('checkers', usersQ, true), drawPeople));
+    jobs.push(fresh(cached('past', pastQ), drawPast));
   }
   await Promise.all(jobs.map(j => j.catch(e => console.error(e))));
 </script>

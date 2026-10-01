@@ -4,18 +4,13 @@ import { initializeApp } from 'https://www.gstatic.com/firebasejs/12.19.0/fireba
 import { getAuth, initializeAuth, inMemoryPersistence, onAuthStateChanged, signOut, connectAuthEmulator,
   createUserWithEmailAndPassword, signInWithEmailAndPassword }
   from 'https://www.gstatic.com/firebasejs/12.19.0/firebase-auth.js';
-import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, connectFirestoreEmulator,
-  doc, getDoc, getDocs, getDocsFromCache, collection }
+import { getFirestore, connectFirestoreEmulator, doc, getDoc, getDocs, collection }
   from 'https://www.gstatic.com/firebasejs/12.19.0/firebase-firestore.js';
 import { firebaseConfig } from './firebase-config.js';
 
 export const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
-// Keep a copy of the data on the phone, so screens can show it instantly
-// and then update from the internet.
-export const db = initializeFirestore(app, {
-  localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }),
-});
+export const db = getFirestore(app);
 
 // Local testing only: talk to the Firebase emulator instead of the real project.
 const EMULATOR = location.hostname === 'localhost' && location.port === '5055';
@@ -63,23 +58,40 @@ export const shortDate = s => { const d = fromIso(s); return `${DAY[d.getDay()]}
 export const blockLabel = b => `${shortDate(b.start)} – ${shortDate(b.end)}`;
 
 /* ---------- loading data fast ----------
-   fresh(load, render): shows the copy saved on this phone straight away,
-   then the latest copy from the internet a moment later. load(true) must
-   return null when the phone has nothing saved yet. */
+   saved: the last lists this phone loaded, kept as plain text in localStorage.
+   (Firestore's own phone storage could get stuck when pages were switched
+   quickly, so it is not used.)
+   fresh(load, render): shows the saved copy straight away, then the latest
+   copy from the internet. load(true) returns the saved copy or null.
+   If the internet copy takes over 12 seconds, a message replaces "Loading…". */
+export const saved = {
+  get(k) { try { return JSON.parse(localStorage.getItem('c:' + k)); } catch (e) { return null; } },
+  set(k, v) { try { localStorage.setItem('c:' + k, JSON.stringify(v)); } catch (e) {} },
+  clear() { try { Object.keys(localStorage).filter(k => k.startsWith('c:')).forEach(k => localStorage.removeItem(k)); } catch (e) {} },
+};
+export const withTimeout = (p, ms = 12000) => Promise.race([p,
+  new Promise((_, rej) => setTimeout(() => rej(Object.assign(new Error('timeout'), { code: 'timeout' })), ms))]);
+
 export async function fresh(load, render) {
   let shown = false;
-  try { const d = await load(true); if (d != null) { render(d, true); shown = true; } } catch (e) {}
-  try { render(await load(false), false); }
-  catch (e) { console.warn(e); if (!shown) throw e; }
+  try { const d = await load(true); if (d != null) { render(d, true); shown = true; } } catch (e) { console.warn(e); }
+  try { render(await withTimeout(load(false)), false); }
+  catch (e) {
+    console.warn(e);
+    if (!shown) document.querySelectorAll('.empty').forEach(el => {
+      if (el.textContent.trim() === 'Loading…')
+        el.innerHTML = 'Could not load. Check your internet, then <a class="link" href="">try again</a>.';
+    });
+  }
 }
 
 // Items and groups, needed to work out any block's amounts.
 export async function loadStock(fromCache = false) {
-  const get = fromCache ? getDocsFromCache : getDocs;
-  const [is, gs] = await Promise.all([get(collection(db, 'items')), get(collection(db, 'groups'))]);
-  if (fromCache && is.empty) return null;
+  if (fromCache) return saved.get('stock');
+  const [is, gs] = await Promise.all([getDocs(collection(db, 'items')), getDocs(collection(db, 'groups'))]);
   const items = is.docs.map(d => ({ id: d.id, ...d.data() })).sort(byName);
   const groups = Object.fromEntries(gs.docs.map(d => [d.id, { id: d.id, multiply: 1, dates: [], custom: {}, ...d.data() }]));
+  saved.set('stock', { items, groups });
   return { items, groups };
 }
 
@@ -126,7 +138,7 @@ export const authReady = new Promise(r => { authResolve = r; });
 const stopAuth = onAuthStateChanged(auth, u => { stopAuth(); authResolve(u); });
 
 export function remember(me) { try { localStorage.setItem('me', JSON.stringify(me)); } catch (e) {} }
-export function forget() { try { localStorage.removeItem('me'); } catch (e) {} }
+export function forget() { try { localStorage.removeItem('me'); } catch (e) {} saved.clear(); }
 
 // Reads the person's role and remembers it. Returns null if they have no access.
 export async function loadMe(user) {

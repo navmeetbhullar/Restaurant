@@ -1,35 +1,38 @@
 // Background helper. Runs even when the app is closed.
-//  1. Keeps the app's files on the phone so pages open instantly. It shows the
-//     saved copy and quietly downloads the newest one for next time.
+//  1. Keeps a copy of the app's files on the phone. Pages and app code come
+//     from the internet first (so a new version is never mixed with an old
+//     one) and the copy is only used when offline. Library files with a
+//     version number in their address never change, so those load from the copy.
 //  2. Shows notifications: the server sends { title, body, url }.
-const CACHE = 'stock-v2';
+const CACHE = 'stock-v3';
 self.addEventListener('install', () => self.skipWaiting());
 self.addEventListener('activate', e => e.waitUntil((async () => {
   for (const k of await caches.keys()) if (k !== CACHE) await caches.delete(k);
   await self.clients.claim();
 })()));
 
-const SAVE = url =>
-  (url.origin === self.location.origin && !url.pathname.startsWith('/api/')) ||
-  url.href.startsWith('https://www.gstatic.com/firebasejs/') ||
-  url.href.startsWith('https://cdn.jsdelivr.net/npm/jspdf');
+const FIXED = url => url.href.startsWith('https://www.gstatic.com/firebasejs/') || url.href.startsWith('https://cdn.jsdelivr.net/npm/jspdf');
+const OURS = url => url.origin === self.location.origin && !url.pathname.startsWith('/api/');
 
 self.addEventListener('fetch', e => {
   const req = e.request;
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
-  if (!SAVE(url)) return;
-  e.respondWith((async () => {
-    const cache = await caches.open(CACHE);
-    const key = url.origin === self.location.origin ? url.pathname : req;   // ignore ?id=... for pages
-    const saved = await cache.match(key);
-    const fetching = fetch(req).then(res => {
-      if (res.ok) cache.put(key, res.clone());
+  if (FIXED(url)) {
+    e.respondWith(caches.open(CACHE).then(async cache => {
+      const hit = await cache.match(req);
+      if (hit) return hit;
+      const res = await fetch(req);
+      if (res.ok) cache.put(req, res.clone());
       return res;
-    }).catch(() => saved);
-    if (saved) { e.waitUntil(fetching); return saved; }
-    return fetching;
-  })());
+    }));
+  } else if (OURS(url)) {
+    const key = url.pathname;                       // ignore ?id=... for pages
+    e.respondWith(fetch(req).then(res => {
+      if (res.ok) { const copy = res.clone(); caches.open(CACHE).then(c => c.put(key, copy)); }
+      return res;
+    }).catch(async () => (await caches.match(key)) || Response.error()));
+  }
 });
 
 self.addEventListener('push', e => {

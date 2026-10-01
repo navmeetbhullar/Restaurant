@@ -49,7 +49,9 @@
     <div class="row"><div class="key">Sat–Tue</div><input class="field right" id="oB" type="number" inputmode="decimal" min="0" step="any" placeholder="0"><span class="unit oUl"></span></div>
   </div>
   <p class="hint" id="oHint"></p>
+  <p class="error-text" id="oErr" hidden></p>
   <button class="btn frost" data-press id="oAdd">Add item to group</button>
+  <p class="center" id="oCancelBox" hidden><button class="link" id="oCancel" type="button">Cancel changes</button></p>
 
   <div class="lbl">Dates using this group</div>
   <div class="group plain" data-sq="22" id="dates"></div>
@@ -70,7 +72,7 @@
 <script src="apple-ui/apple-ui.js"></script>
 <script type="module">
   import { start, db, $, esc, param, fmtNum, fmtMult, isoDate, fromIso, shortDate, refreshUI, UNITS,
-           amountFor, autoPair, uniqueId, loadStock } from './js/app.js';
+           amountFor, autoPair, autoSatTue, uniqueId, loadStock } from './js/app.js';
   import { collection, doc, writeBatch, arrayRemove } from 'https://www.gstatic.com/firebasejs/12.19.0/firebase-firestore.js';
 
   await start({ adminOnly: true });
@@ -181,36 +183,63 @@
   const syncOUnit = () => document.querySelectorAll('.oUl').forEach(el => el.textContent = $('#oUnit').value);
   $('#oUnit').addEventListener('change', syncOUnit); syncOUnit();
   const oPair = autoPair($('#oA'), $('#oB'), $('#oHint'), () => $('#oUnit').value);
+  // tap an item to change it in the form above; the cross removes it
+  let editing = -1;
   function drawOnly() {
     $('#only').innerHTML = only.length ? only.map((o, n) => `
-      <div class="row" data-n="${n}">
-        <div class="label">${esc(o.name)}<small>${fmtNum(o.wedFri)} Wed–Fri · ${fmtNum(o.satTue)} Sat–Tue ${esc(o.unit)}</small></div>
+      <div class="row" data-tap data-n="${n}" style="cursor:pointer${n === editing ? ';background:var(--sep)' : ''}">
+        <div class="label">${esc(o.name)}<small>${fmtNum(o.wedFri)} Wed–Fri · ${fmtNum(o.satTue)} Sat–Tue ${esc(o.unit)} · tap to change</small></div>
         <button class="x" aria-label="Remove ${esc(o.name)}">${X}</button>
       </div>`).join('') : '<div class="empty">None yet. Add things only needed for this festival, like diyas or sweet boxes.</div>';
     refreshUI();
   }
+  function clearForm() {
+    editing = -1;
+    $('#oName').value = ''; $('#oA').value = ''; $('#oB').value = ''; $('#oB').dataset.auto = '1'; oPair.refill();
+    $('#oAdd').textContent = 'Add item to group';
+    $('#oCancelBox').hidden = true;
+    say('#oErr', '');
+  }
   $('#only').addEventListener('click', e => {
-    const row = e.target.closest('.x')?.closest('[data-n]'); if (!row) return;
-    touch();
-    const [o] = only.splice(+row.dataset.n, 1);
-    if (o.id) removedOnly.push(o.id);
+    const row = e.target.closest('[data-n]'); if (!row) return;
+    const n = +row.dataset.n;
+    if (e.target.closest('.x')) {                         // remove
+      touch();
+      const [o] = only.splice(n, 1);
+      if (o.id) removedOnly.push(o.id);
+      clearForm(); drawOnly();
+      return;
+    }
+    const o = only[n];                                    // change: load it into the form
+    editing = n;
+    if (![...$('#oUnit').options].some(x => x.value === o.unit)) $('#oUnit').add(new Option(o.unit));
+    $('#oName').value = o.name; $('#oUnit').value = o.unit; syncOUnit();
+    $('#oA').value = o.wedFri; $('#oB').value = o.satTue;
+    $('#oB').dataset.auto = Number(o.satTue) === autoSatTue(o.wedFri, o.unit) ? '1' : '0'; oPair.refill();
+    $('#oAdd').textContent = `Save changes to ${o.name}`;
+    $('#oCancelBox').hidden = false;
+    say('#oErr', '');
     drawOnly();
+    $('#oName').scrollIntoView({ behavior: 'smooth', block: 'center' });
   });
+  $('#oCancel').addEventListener('click', () => { clearForm(); drawOnly(); });
   $('#oAdd').addEventListener('click', () => {
-    say('#err', '');
+    say('#oErr', ''); say('#ok', '');
     const name = $('#oName').value.trim().replace(/\s+/g, ' ');
     const wedFri = Number($('#oA').value), satTue = Number($('#oB').value);
-    if (!name) return say('#err', 'Give the new item a name.');
+    if (!name) return say('#oErr', 'Give the item a name.');
     if ($('#oA').value === '' || !(wedFri >= 0) || $('#oB').value === '' || !(satTue >= 0))
-      return say('#err', `Enter how much ${name} is needed: Wed–Fri, then Sat–Tue.`);
-    const clash = [...all.filter(i => !removedOnly.includes(i.id) && !(i.onlyFor === id)), ...only]
+      return say('#oErr', `Enter how much ${name} is needed: Wed–Fri, then Sat–Tue.`);
+    const mine = editing >= 0 ? only[editing] : null;
+    const clash = [...all.filter(i => !removedOnly.includes(i.id) && !(i.onlyFor === id)), ...only.filter(o => o !== mine)]
       .some(i => i.name.toLowerCase() === name.toLowerCase());
-    if (clash) return say('#err', `There is already an item called "${name}".`);
+    if (clash) return say('#oErr', `There is already an item called "${name}".`);
     touch();
-    only.push({ name, unit: $('#oUnit').value, wedFri, satTue });
-    $('#oName').value = ''; $('#oA').value = ''; $('#oB').value = ''; $('#oB').dataset.auto = '1'; oPair.refill();
+    if (mine) Object.assign(mine, { name, unit: $('#oUnit').value, wedFri, satTue });   // keeps its id
+    else only.push({ name, unit: $('#oUnit').value, wedFri, satTue });
+    clearForm();
     drawOnly();
-    say('#ok', `${name} added. Tap "Save group" to keep it.`);
+    say('#ok', `${name} ${mine ? 'changed' : 'added'}. Tap "Save group" to keep it.`);
   });
   drawOnly();
 

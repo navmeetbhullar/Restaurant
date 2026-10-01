@@ -130,7 +130,7 @@
   /* ---------- reading it with Gemini ---------- */
   $('#read').addEventListener('click', async () => {
     say('#err', ''); say('#ok', '');
-    $('#read').disabled = true; $('#read').textContent = 'Reading invoice… (up to 30 seconds)';
+    $('#read').disabled = true; $('#read').textContent = 'Reading invoice… (can take up to a minute)';
     try {
       const r = await api('invoice', { block: block.start, file: file.data, mime: file.mime });
       extra = r.extra || []; auto = true; supplier = r.supplier || '';
